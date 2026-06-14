@@ -36,7 +36,7 @@ public class PartialSuccessTests
     [Theory]
     [InlineData("http")]
     [InlineData("grpc")]
-    public async Task Surfaces_rejected_spans_from_partial_success(string protocol)
+    public async Task SurfacesRejectedSpansFromPartialSuccess(string protocol)
     {
         await using var server = await TestOtlpServer.StartAsync(rejectAll: true);
         var (line, spanCount) = FirstBatch();
@@ -53,7 +53,7 @@ public class PartialSuccessTests
     [Theory]
     [InlineData("http")]
     [InlineData("grpc")]
-    public async Task Reports_clean_acceptance_when_collector_accepts(string protocol)
+    public async Task ReportsCleanAcceptanceWhenCollectorAccepts(string protocol)
     {
         await using var server = await TestOtlpServer.StartAsync(rejectAll: false);
         var (line, _) = FirstBatch();
@@ -67,7 +67,7 @@ public class PartialSuccessTests
     }
 
     [Fact]
-    public async Task Importer_returns_partial_success_exit_code_when_spans_are_rejected()
+    public async Task ImporterReturnsPartialSuccessExitCodeWhenSpansAreRejected()
     {
         await using var server = await TestOtlpServer.StartAsync(rejectAll: true);
 

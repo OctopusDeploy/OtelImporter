@@ -16,42 +16,42 @@ public class JsonlLineReaderTests
     static MemoryStream Bytes(string text) => new(Encoding.UTF8.GetBytes(text));
 
     [Fact]
-    public async Task Splits_lines_on_newline()
+    public async Task SplitsLinesOnNewline()
     {
         var lines = await ReadAll(Bytes("a\nb\nc\n"));
         Assert.Equal(["a", "b", "c"], lines);
     }
 
     [Fact]
-    public async Task Handles_missing_trailing_newline()
+    public async Task HandlesMissingTrailingNewline()
     {
         var lines = await ReadAll(Bytes("a\nb\nc"));
         Assert.Equal(["a", "b", "c"], lines);
     }
 
     [Fact]
-    public async Task Handles_crlf_line_endings()
+    public async Task HandlesCrlfLineEndings()
     {
         var lines = await ReadAll(Bytes("a\r\nb\r\n"));
         Assert.Equal(["a", "b"], lines);
     }
 
     [Fact]
-    public async Task Skips_blank_lines()
+    public async Task SkipsBlankLines()
     {
         var lines = await ReadAll(Bytes("a\n\n\nb\n"));
         Assert.Equal(["a", "b"], lines);
     }
 
     [Fact]
-    public async Task Empty_stream_yields_nothing()
+    public async Task EmptyStreamYieldsNothing()
     {
         var lines = await ReadAll(Bytes(""));
         Assert.Empty(lines);
     }
 
     [Fact]
-    public async Task Reassembles_lines_split_across_read_boundaries()
+    public async Task ReassemblesLinesSplitAcrossReadBoundaries()
     {
         // A drip-fed stream (1 byte per read) exercises the partial-line carry-over logic.
         var content = "{\"a\":1}\n{\"b\":2}\n{\"c\":3}";
@@ -60,7 +60,7 @@ public class JsonlLineReaderTests
     }
 
     [Fact]
-    public async Task Preserves_unicode_bytes()
+    public async Task PreservesUnicodeBytes()
     {
         var lines = await ReadAll(new ChunkedStream(Encoding.UTF8.GetBytes("café\n☃\n"), chunkSize: 2));
         Assert.Equal(["café", "☃"], lines);

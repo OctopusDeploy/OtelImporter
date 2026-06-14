@@ -6,7 +6,7 @@ namespace OtelImporter.Tests;
 public class BatchRateLimiterTests
 {
     [Fact]
-    public async Task First_batch_is_not_delayed()
+    public async Task FirstBatchIsNotDelayed()
     {
         var time = new FakeTimeProvider();
         var limiter = new BatchRateLimiter(2, time);
@@ -18,7 +18,7 @@ public class BatchRateLimiterTests
     }
 
     [Fact]
-    public async Task Subsequent_batches_are_paced_to_the_interval()
+    public async Task SubsequentBatchesArePacedToTheInterval()
     {
         var time = new FakeTimeProvider();
         var limiter = new BatchRateLimiter(2, time); // 2/sec => 500ms interval
@@ -36,7 +36,7 @@ public class BatchRateLimiterTests
     }
 
     [Fact]
-    public async Task Does_not_delay_when_already_slower_than_the_rate()
+    public async Task DoesNotDelayWhenAlreadySlowerThanTheRate()
     {
         var time = new FakeTimeProvider();
         var limiter = new BatchRateLimiter(10, time); // 100ms interval
@@ -52,7 +52,7 @@ public class BatchRateLimiterTests
     }
 
     [Fact]
-    public void Rejects_non_positive_rate()
+    public void RejectsNonPositiveRate()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new BatchRateLimiter(0, new FakeTimeProvider()));
     }

@@ -13,7 +13,7 @@ public class ExporterConfigurationResolverTests
     static readonly Func<string, string?> NoEnv = _ => null;
 
     [Fact]
-    public void Command_line_endpoint_takes_precedence_over_environment()
+    public void CommandLineEndpointTakesPrecedenceOverEnvironment()
     {
         var options = new CommandLineOptions { Endpoint = "http://cli:4318", Protocol = OtlpProtocol.Http };
         var env = Env(
@@ -27,7 +27,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Traces_environment_variable_takes_precedence_over_generic()
+    public void TracesEnvironmentVariableTakesPrecedenceOverGeneric()
     {
         var options = new CommandLineOptions { Protocol = OtlpProtocol.Http };
         var env = Env(
@@ -41,7 +41,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Falls_back_to_generic_environment_variable()
+    public void FallsBackToGenericEnvironmentVariable()
     {
         var options = new CommandLineOptions { Protocol = OtlpProtocol.Http };
         var env = Env((ExporterConfigurationResolver.GenericEndpointVariable, "http://generic-env:4318"));
@@ -53,7 +53,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Errors_when_no_endpoint_is_available()
+    public void ErrorsWhenNoEndpointIsAvailable()
     {
         var result = ExporterConfigurationResolver.Resolve(new CommandLineOptions(), NoEnv);
 
@@ -64,7 +64,7 @@ public class ExporterConfigurationResolverTests
     [Theory]
     [InlineData("http://host:4317", OtlpProtocol.Grpc)]
     [InlineData("http://host:4318", OtlpProtocol.Http)]
-    public void Sniffs_protocol_from_port(string endpoint, OtlpProtocol expected)
+    public void SniffsProtocolFromPort(string endpoint, OtlpProtocol expected)
     {
         var options = new CommandLineOptions { Endpoint = endpoint };
 
@@ -75,7 +75,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Explicit_protocol_overrides_port_sniffing()
+    public void ExplicitProtocolOverridesPortSniffing()
     {
         // Port says http, but --protocol grpc should win.
         var options = new CommandLineOptions { Endpoint = "http://host:4318", Protocol = OtlpProtocol.Grpc };
@@ -87,7 +87,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Errors_when_protocol_cannot_be_determined()
+    public void ErrorsWhenProtocolCannotBeDetermined()
     {
         var options = new CommandLineOptions { Endpoint = "http://host:9999" };
 
@@ -98,7 +98,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Http_endpoint_gets_traces_path_appended()
+    public void HttpEndpointGetsTracesPathAppended()
     {
         var options = new CommandLineOptions { Endpoint = "http://host:4318" };
 
@@ -108,7 +108,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Http_endpoint_with_base_path_gets_traces_path_appended()
+    public void HttpEndpointWithBasePathGetsTracesPathAppended()
     {
         var options = new CommandLineOptions { Endpoint = "http://host:4318/otlp", Protocol = OtlpProtocol.Http };
 
@@ -118,7 +118,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Http_endpoint_already_pointing_at_traces_path_is_left_alone()
+    public void HttpEndpointAlreadyPointingAtTracesPathIsLeftAlone()
     {
         var options = new CommandLineOptions { Endpoint = "http://host:4318/v1/traces" };
 
@@ -128,7 +128,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Grpc_endpoint_uses_fixed_service_path()
+    public void GrpcEndpointUsesFixedServicePath()
     {
         var options = new CommandLineOptions { Endpoint = "http://host:4317" };
 
@@ -140,7 +140,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Bare_host_and_port_defaults_to_http_scheme()
+    public void BareHostAndPortDefaultsToHttpScheme()
     {
         var options = new CommandLineOptions { Endpoint = "localhost:4317" };
 
@@ -152,7 +152,7 @@ public class ExporterConfigurationResolverTests
     }
 
     [Fact]
-    public void Https_grpc_endpoint_is_preserved()
+    public void HttpsGrpcEndpointIsPreserved()
     {
         var options = new CommandLineOptions { Endpoint = "https://host:4317" };
 

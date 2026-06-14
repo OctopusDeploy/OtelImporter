@@ -8,7 +8,7 @@ namespace OtelImporter.Tests;
 public class ImportRunnerTests
 {
     [Fact]
-    public async Task Exports_each_non_empty_line_and_counts_batches()
+    public async Task ExportsEachNonEmptyLineAndCountsBatches()
     {
         var input = new StubInputStreamFactory("{\"a\":1}\n\n{\"b\":2}\n{\"c\":3}\n");
         var exporter = new RecordingExporter();
@@ -20,7 +20,7 @@ public class ImportRunnerTests
     }
 
     [Fact]
-    public async Task Reports_progress_per_batch()
+    public async Task ReportsProgressPerBatch()
     {
         var input = new StubInputStreamFactory("1\n2\n3\n");
         var exporter = new RecordingExporter();
@@ -32,7 +32,7 @@ public class ImportRunnerTests
     }
 
     [Fact]
-    public async Task Aggregates_rejected_spans_and_emits_a_diagnostic_per_problem_batch()
+    public async Task AggregatesRejectedSpansAndEmitsADiagnosticPerProblemBatch()
     {
         var input = new StubInputStreamFactory("1\n2\n3\n");
         // Batches 1 and 3 report rejections; batch 2 is clean.
@@ -54,7 +54,7 @@ public class ImportRunnerTests
     }
 
     [Fact]
-    public async Task No_diagnostics_when_everything_is_accepted()
+    public async Task NoDiagnosticsWhenEverythingIsAccepted()
     {
         var input = new StubInputStreamFactory("1\n2\n");
         var exporter = new RecordingExporter();

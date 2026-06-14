@@ -16,7 +16,7 @@ public class InputStreamFactoryTests : IDisposable
     }
 
     [Fact]
-    public void HasZstdMagic_detects_magic_number()
+    public void HasZstdMagicDetectsMagicNumber()
     {
         Assert.True(InputStreamFactory.HasZstdMagic([0x28, 0xB5, 0x2F, 0xFD, 0x00]));
         Assert.False(InputStreamFactory.HasZstdMagic("{\"resourceSpans\""u8));
@@ -24,7 +24,7 @@ public class InputStreamFactoryTests : IDisposable
     }
 
     [Fact]
-    public async Task Opens_plain_jsonl_file()
+    public async Task OpensPlainJsonlFile()
     {
         var path = TempFile(".jsonl");
         await File.WriteAllTextAsync(path, "line1\nline2\n");
@@ -35,7 +35,7 @@ public class InputStreamFactoryTests : IDisposable
     }
 
     [Fact]
-    public async Task Transparently_decompresses_zstd_file_by_magic_number()
+    public async Task TransparentlyDecompressesZstdFileByMagicNumber()
     {
         // Note: a .jsonl extension but zstd content -- detection is by magic, not extension.
         var path = TempFile(".jsonl");
@@ -49,7 +49,7 @@ public class InputStreamFactoryTests : IDisposable
     }
 
     [Fact]
-    public async Task Decompresses_large_zstd_content()
+    public async Task DecompressesLargeZstdContent()
     {
         var path = TempFile(".jsonl.zst");
         var builder = new StringBuilder();

@@ -15,7 +15,7 @@ public class OtlpProtobufSerializerTests
         JsonSerializer.Deserialize(json, OtlpJsonContext.Default.ExportTraceServiceRequest)!;
 
     [Fact]
-    public void Round_trips_span_scalars_through_protobuf()
+    public void RoundTripsSpanScalarsThroughProtobuf()
     {
         var request = Deserialize(SampleJson);
         var bytes = OtlpProtobufSerializer.Serialize(request);
@@ -39,7 +39,7 @@ public class OtlpProtobufSerializerTests
     }
 
     [Fact]
-    public void Round_trips_string_and_int_attributes()
+    public void RoundTripsStringAndIntAttributes()
     {
         var request = Deserialize(SampleJson);
         var bytes = OtlpProtobufSerializer.Serialize(request);
@@ -60,7 +60,7 @@ public class OtlpProtobufSerializerTests
     }
 
     [Fact]
-    public void Round_trips_events()
+    public void RoundTripsEvents()
     {
         var request = Deserialize(SampleJson);
         var bytes = OtlpProtobufSerializer.Serialize(request);
@@ -73,7 +73,7 @@ public class OtlpProtobufSerializerTests
     }
 
     [Fact]
-    public void Resource_and_scope_are_preserved()
+    public void ResourceAndScopeArePreserved()
     {
         var request = Deserialize(SampleJson);
         var bytes = OtlpProtobufSerializer.Serialize(request);

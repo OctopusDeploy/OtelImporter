@@ -5,7 +5,7 @@ namespace OtelImporter.Tests;
 public class CommandLineParserTests
 {
     [Fact]
-    public void Parses_positional_input_file()
+    public void ParsesPositionalInputFile()
     {
         var result = CommandLineParser.Parse(["traces.jsonl"]);
 
@@ -18,7 +18,7 @@ public class CommandLineParserTests
     [Theory]
     [InlineData("--endpoint")]
     [InlineData("-e")]
-    public void Parses_endpoint_flag(string flag)
+    public void ParsesEndpointFlag(string flag)
     {
         var result = CommandLineParser.Parse(["traces.jsonl", flag, "http://localhost:4318"]);
 
@@ -30,7 +30,7 @@ public class CommandLineParserTests
     [InlineData("--protocol", "grpc", OtlpProtocol.Grpc)]
     [InlineData("-p", "http", OtlpProtocol.Http)]
     [InlineData("-p", "GRPC", OtlpProtocol.Grpc)]
-    public void Parses_protocol_flag(string flag, string value, OtlpProtocol expected)
+    public void ParsesProtocolFlag(string flag, string value, OtlpProtocol expected)
     {
         var result = CommandLineParser.Parse(["traces.jsonl", flag, value]);
 
@@ -39,7 +39,7 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void Flags_can_precede_positional_argument()
+    public void FlagsCanPrecedePositionalArgument()
     {
         var result = CommandLineParser.Parse(["-e", "http://host:4317", "-p", "grpc", "traces.jsonl"]);
 
@@ -52,7 +52,7 @@ public class CommandLineParserTests
     [Theory]
     [InlineData("-h")]
     [InlineData("--help")]
-    public void Recognises_help(string flag)
+    public void RecognisesHelp(string flag)
     {
         var result = CommandLineParser.Parse([flag]);
 
@@ -63,7 +63,7 @@ public class CommandLineParserTests
     [Theory]
     [InlineData("--max-rate", "50", 50.0)]
     [InlineData("-r", "12.5", 12.5)]
-    public void Parses_max_rate(string flag, string value, double expected)
+    public void ParsesMaxRate(string flag, string value, double expected)
     {
         var result = CommandLineParser.Parse(["traces.jsonl", flag, value]);
 
@@ -75,7 +75,7 @@ public class CommandLineParserTests
     [InlineData("0")]
     [InlineData("-5")]
     [InlineData("abc")]
-    public void Rejects_invalid_max_rate(string value)
+    public void RejectsInvalidMaxRate(string value)
     {
         var result = CommandLineParser.Parse(["traces.jsonl", "--max-rate", value]);
 
@@ -83,7 +83,7 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void Parses_max_retries()
+    public void ParsesMaxRetries()
     {
         var result = CommandLineParser.Parse(["traces.jsonl", "--max-retries", "0"]);
 
@@ -94,7 +94,7 @@ public class CommandLineParserTests
     [Theory]
     [InlineData("-1")]
     [InlineData("notanumber")]
-    public void Rejects_invalid_max_retries(string value)
+    public void RejectsInvalidMaxRetries(string value)
     {
         var result = CommandLineParser.Parse(["traces.jsonl", "--max-retries", value]);
 
@@ -102,7 +102,7 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void Rejects_invalid_protocol()
+    public void RejectsInvalidProtocol()
     {
         var result = CommandLineParser.Parse(["traces.jsonl", "-p", "carrier-pigeon"]);
 
@@ -111,7 +111,7 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void Rejects_unknown_option()
+    public void RejectsUnknownOption()
     {
         var result = CommandLineParser.Parse(["traces.jsonl", "--frobnicate"]);
 
@@ -119,7 +119,7 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void Rejects_missing_flag_value()
+    public void RejectsMissingFlagValue()
     {
         var result = CommandLineParser.Parse(["traces.jsonl", "--endpoint"]);
 
@@ -127,7 +127,7 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void Rejects_two_positional_arguments()
+    public void RejectsTwoPositionalArguments()
     {
         var result = CommandLineParser.Parse(["one.jsonl", "two.jsonl"]);
 

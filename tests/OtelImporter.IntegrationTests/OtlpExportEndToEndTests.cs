@@ -18,7 +18,7 @@ public class OtlpExportEndToEndTests
     [InlineData("http", "sample-traces.jsonl.zst")]
     [InlineData("grpc", "sample-traces.jsonl")]
     [InlineData("grpc", "sample-traces.jsonl.zst")]
-    public async Task Imports_sample_file_to_upstream(string protocol, string fileName)
+    public async Task ImportsSampleFileToUpstream(string protocol, string fileName)
     {
         await using var server = await TestOtlpServer.StartAsync();
         var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
@@ -38,7 +38,7 @@ public class OtlpExportEndToEndTests
     [Theory]
     [InlineData("http")]
     [InlineData("grpc")]
-    public async Task Recovers_from_transient_failures_via_retry(string protocol)
+    public async Task RecoversFromTransientFailuresViaRetry(string protocol)
     {
         // The server fails the first two requests (503 / gRPC UNAVAILABLE); retry-with-backoff
         // should recover so every span still lands.
@@ -57,7 +57,7 @@ public class OtlpExportEndToEndTests
     }
 
     [Fact]
-    public async Task Returns_runtime_error_when_retries_are_exhausted()
+    public async Task ReturnsRuntimeErrorWhenRetriesAreExhausted()
     {
         // More failures than retries (default 4) => the import ultimately fails.
         await using var server = await TestOtlpServer.StartAsync(failFirstRequests: 99);
@@ -74,7 +74,7 @@ public class OtlpExportEndToEndTests
     }
 
     [Fact]
-    public async Task Returns_runtime_error_when_upstream_is_unreachable()
+    public async Task ReturnsRuntimeErrorWhenUpstreamIsUnreachable()
     {
         // No server listening on this port => the export should fail, not crash.
         var exitCode = await Importer.RunAsync(
@@ -88,7 +88,7 @@ public class OtlpExportEndToEndTests
     }
 
     [Fact]
-    public async Task Returns_usage_error_for_missing_file()
+    public async Task ReturnsUsageErrorForMissingFile()
     {
         var exitCode = await Importer.RunAsync(
         [

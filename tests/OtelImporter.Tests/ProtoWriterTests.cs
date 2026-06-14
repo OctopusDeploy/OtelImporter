@@ -11,7 +11,7 @@ public class ProtoWriterTests
     [InlineData(128UL, new byte[] { 0x80, 0x01 })]
     [InlineData(300UL, new byte[] { 0xAC, 0x02 })]
     [InlineData(ulong.MaxValue, new byte[] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01 })]
-    public void WriteVarint_matches_known_encodings(ulong value, byte[] expected)
+    public void WriteVarintMatchesKnownEncodings(ulong value, byte[] expected)
     {
         using var writer = new ProtoWriter();
         writer.WriteVarint(value);
@@ -20,7 +20,7 @@ public class ProtoWriterTests
     }
 
     [Fact]
-    public void WriteFixed64_is_little_endian()
+    public void WriteFixed64IsLittleEndian()
     {
         using var writer = new ProtoWriter();
         writer.WriteFixed64(7, 0x0102030405060708);
@@ -31,7 +31,7 @@ public class ProtoWriterTests
     }
 
     [Fact]
-    public void WriteFixed32_is_little_endian()
+    public void WriteFixed32IsLittleEndian()
     {
         using var writer = new ProtoWriter();
         writer.WriteFixed32(16, 257);
@@ -42,7 +42,7 @@ public class ProtoWriterTests
     }
 
     [Fact]
-    public void WriteString_writes_tag_length_and_utf8()
+    public void WriteStringWritesTagLengthAndUtf8()
     {
         using var writer = new ProtoWriter();
         writer.WriteString(5, "POST");
@@ -53,7 +53,7 @@ public class ProtoWriterTests
     }
 
     [Fact]
-    public void Scalar_defaults_are_omitted()
+    public void ScalarDefaultsAreOmitted()
     {
         using var writer = new ProtoWriter();
         writer.WriteString(1, "");
@@ -68,7 +68,7 @@ public class ProtoWriterTests
     }
 
     [Fact]
-    public void WriteLengthDelimited_round_trips_via_reader()
+    public void WriteLengthDelimitedRoundTripsViaReader()
     {
         using var inner = new ProtoWriter();
         inner.WriteString(1, "hello");

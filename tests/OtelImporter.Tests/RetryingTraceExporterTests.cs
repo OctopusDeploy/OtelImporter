@@ -23,7 +23,7 @@ public class RetryingTraceExporterTests
     }
 
     [Fact]
-    public async Task Retries_transient_failures_then_succeeds()
+    public async Task RetriesTransientFailuresThenSucceeds()
     {
         var time = new FakeTimeProvider();
         var inner = new StubExporter(attempt => attempt <= 2
@@ -39,7 +39,7 @@ public class RetryingTraceExporterTests
     }
 
     [Fact]
-    public async Task Gives_up_after_max_attempts()
+    public async Task GivesUpAfterMaxAttempts()
     {
         var time = new FakeTimeProvider();
         var inner = new StubExporter(attempt => throw new TraceExportException($"always #{attempt}") { IsRetryable = true });
@@ -53,7 +53,7 @@ public class RetryingTraceExporterTests
     }
 
     [Fact]
-    public async Task Does_not_retry_non_retryable_failures()
+    public async Task DoesNotRetryNonRetryableFailures()
     {
         var time = new FakeTimeProvider();
         var inner = new StubExporter(_ => throw new TraceExportException("400 bad request") { IsRetryable = false });
@@ -64,7 +64,7 @@ public class RetryingTraceExporterTests
     }
 
     [Fact]
-    public async Task Retries_network_errors()
+    public async Task RetriesNetworkErrors()
     {
         var time = new FakeTimeProvider();
         var inner = new StubExporter(attempt => attempt == 1
@@ -80,7 +80,7 @@ public class RetryingTraceExporterTests
     }
 
     [Fact]
-    public async Task Does_not_retry_when_cancelled()
+    public async Task DoesNotRetryWhenCancelled()
     {
         var time = new FakeTimeProvider();
         var inner = new StubExporter(_ => throw new TraceExportException("transient") { IsRetryable = true });
@@ -93,7 +93,7 @@ public class RetryingTraceExporterTests
     }
 
     [Fact]
-    public async Task Honors_retry_after_hint_over_backoff()
+    public async Task HonorsRetryAfterHintOverBackoff()
     {
         var time = new FakeTimeProvider();
         var inner = new StubExporter(attempt => attempt == 1
