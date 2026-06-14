@@ -1,13 +1,14 @@
 using System.Net.Http;
 using Microsoft.Extensions.Time.Testing;
 using OtelImporter.Export;
+using OtelImporter.Otlp;
 
 namespace OtelImporter.Tests;
 
 public class RetryingTraceExporterTests
 {
     static readonly RetryOptions Options = new(MaxAttempts: 3, BaseDelay: TimeSpan.FromSeconds(1), MaxDelay: TimeSpan.FromSeconds(30));
-    static readonly ReadOnlyMemory<byte> Line = "{}"u8.ToArray();
+    static readonly ExportTraceServiceRequest Batch = new();
 
     // Advances the fake clock repeatedly (with yields so continuations can register
     // their next delay) until the export task settles. Over-advancing is harmless;
@@ -31,7 +32,7 @@ public class RetryingTraceExporterTests
             : ExportOutcome.Accepted);
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        var task = sut.ExportAsync(Line, CancellationToken.None);
+        var task = sut.ExportAsync(Batch, CancellationToken.None);
         await DriveAsync(task, time);
 
         Assert.False(task.IsFaulted);
@@ -45,7 +46,7 @@ public class RetryingTraceExporterTests
         var inner = new StubExporter(attempt => throw new TraceExportException($"always #{attempt}") { IsRetryable = true });
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        var task = sut.ExportAsync(Line, CancellationToken.None);
+        var task = sut.ExportAsync(Batch, CancellationToken.None);
         await DriveAsync(task, time);
 
         await Assert.ThrowsAsync<TraceExportException>(() => task);
@@ -59,7 +60,7 @@ public class RetryingTraceExporterTests
         var inner = new StubExporter(_ => throw new TraceExportException("400 bad request") { IsRetryable = false });
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        await Assert.ThrowsAsync<TraceExportException>(() => sut.ExportAsync(Line, CancellationToken.None));
+        await Assert.ThrowsAsync<TraceExportException>(() => sut.ExportAsync(Batch, CancellationToken.None));
         Assert.Equal(1, inner.Attempts);
     }
 
@@ -72,7 +73,7 @@ public class RetryingTraceExporterTests
             : ExportOutcome.Accepted);
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        var task = sut.ExportAsync(Line, CancellationToken.None);
+        var task = sut.ExportAsync(Batch, CancellationToken.None);
         await DriveAsync(task, time);
 
         await task;
@@ -88,7 +89,7 @@ public class RetryingTraceExporterTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        await Assert.ThrowsAsync<TraceExportException>(() => sut.ExportAsync(Line, cts.Token));
+        await Assert.ThrowsAsync<TraceExportException>(() => sut.ExportAsync(Batch, cts.Token));
         Assert.Equal(1, inner.Attempts);
     }
 
@@ -102,7 +103,7 @@ public class RetryingTraceExporterTests
         var sut = new RetryingTraceExporter(inner, Options, time);
 
         // The first delay timer is registered synchronously before ExportAsync yields.
-        var task = sut.ExportAsync(Line, CancellationToken.None);
+        var task = sut.ExportAsync(Batch, CancellationToken.None);
 
         time.Advance(TimeSpan.FromSeconds(9));
         await Task.Yield();
@@ -117,7 +118,7 @@ public class RetryingTraceExporterTests
     {
         public int Attempts { get; private set; }
 
-        public Task<ExportOutcome> ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
+        public Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
         {
             Attempts++;
             return Task.FromResult(onCall(Attempts));

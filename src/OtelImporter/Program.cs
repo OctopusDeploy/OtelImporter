@@ -82,6 +82,9 @@ internal static class Importer
 
         var runner = new ImportRunner(new InputStreamFactory(), exporter, rateLimiter);
 
+        // By default we also summarise what was exported; --no-inspect skips it.
+        var inspector = options.NoInspect ? null : new TraceInspector();
+
         var stopwatch = Stopwatch.StartNew();
         var progress = new Progress<long>(count =>
         {
@@ -91,10 +94,13 @@ internal static class Importer
 
         try
         {
-            var result = await runner.RunAsync(options.InputFile, progress, ReportDiagnostic, cancellation.Token);
+            var result = await runner.RunAsync(options.InputFile, progress, ReportDiagnostic, inspector, cancellation.Token);
             stopwatch.Stop();
             Console.Write("\r");
             Console.WriteLine($"Done. Exported {result.BatchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
+
+            if (inspector is not null)
+                PrintSummary(inspector.BuildSummary(result.BatchCount));
 
             if (result.RejectedSpanCount > 0)
             {
@@ -225,6 +231,7 @@ internal static class Importer
         writer.WriteLine("      --max-retries <n>   Retries per batch on transient failures (default: 4, 0 disables).");
         writer.WriteLine("  -i, --inspect           Read-only: summarise the file instead of exporting.");
         writer.WriteLine("                          Export options (endpoint, rate, retries) are ignored.");
+        writer.WriteLine("      --no-inspect        Export without printing the end-of-run summary.");
         writer.WriteLine("  -h, --help              Show this help.");
         writer.WriteLine();
         writer.WriteLine("Endpoint resolution (highest precedence first):");

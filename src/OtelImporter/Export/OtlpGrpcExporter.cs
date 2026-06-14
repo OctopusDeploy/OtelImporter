@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Text.Json;
 using OtelImporter.Otlp;
 
 namespace OtelImporter.Export;
@@ -12,8 +11,9 @@ namespace OtelImporter.Export;
 //   * Content-Type: application/grpc
 //   * the call result is carried in the grpc-status trailer (0 == OK)
 //
-// We parse the OTLP/JSON line into the object model and re-encode it as OTLP
-// protobuf (see OtlpProtobufSerializer) for the payload.
+// The batch arrives already parsed into the object model (the runner deserializes
+// each input line once); we encode it as OTLP protobuf (see OtlpProtobufSerializer)
+// for the payload.
 internal sealed class OtlpGrpcExporter : ITraceExporter
 {
     static readonly MediaTypeHeaderValue GrpcContentType = new("application/grpc");
@@ -29,11 +29,8 @@ internal sealed class OtlpGrpcExporter : ITraceExporter
         _ownsHttpClient = ownsHttpClient;
     }
 
-    public async Task<ExportOutcome> ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
+    public async Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
     {
-        var request = JsonSerializer.Deserialize(otlpJsonLine.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
-                      ?? throw new TraceExportException("Trace line deserialized to null.");
-
         var payload = OtlpProtobufSerializer.Serialize(request);
         var frame = Frame(payload);
 

@@ -8,6 +8,7 @@ internal sealed record CommandLineOptions
     public double? MaxBatchesPerSecond { get; init; }
     public int? MaxRetries { get; init; }
     public bool Inspect { get; init; }
+    public bool NoInspect { get; init; }
     public bool ShowHelp { get; init; }
 }
 
@@ -25,6 +26,7 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 //   --max-rate, -r <value>  throttle: maximum batches per second
 //   --max-retries <count>   retries per batch on transient failures (0 disables)
 //   --inspect, -i           read-only: summarise the file instead of exporting
+//   --no-inspect            export without printing the end-of-run summary
 //   --help, -h              show usage
 internal static class CommandLineParser
 {
@@ -36,6 +38,7 @@ internal static class CommandLineParser
         double? maxBatchesPerSecond = null;
         int? maxRetries = null;
         var inspect = false;
+        var noInspect = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -84,6 +87,10 @@ internal static class CommandLineParser
                     inspect = true;
                     break;
 
+                case "--no-inspect":
+                    noInspect = true;
+                    break;
+
                 default:
                     if (arg.StartsWith('-'))
                         return CommandLineParseResult.Failure($"Unknown option '{arg}'.");
@@ -94,6 +101,9 @@ internal static class CommandLineParser
             }
         }
 
+        if (inspect && noInspect)
+            return CommandLineParseResult.Failure("Cannot combine --inspect (read-only) with --no-inspect.");
+
         return CommandLineParseResult.Success(new CommandLineOptions
         {
             InputFile = inputFile,
@@ -102,6 +112,7 @@ internal static class CommandLineParser
             MaxBatchesPerSecond = maxBatchesPerSecond,
             MaxRetries = maxRetries,
             Inspect = inspect,
+            NoInspect = noInspect,
         });
     }
 

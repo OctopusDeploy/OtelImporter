@@ -57,6 +57,26 @@ public class CommandLineParserTests
 
         Assert.Null(result.Error);
         Assert.False(result.Options!.Inspect);
+        Assert.False(result.Options.NoInspect);
+    }
+
+    [Fact]
+    public void ParsesNoInspectFlag()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "--no-inspect"]);
+
+        Assert.Null(result.Error);
+        Assert.True(result.Options!.NoInspect);
+        Assert.False(result.Options.Inspect);
+    }
+
+    [Fact]
+    public void RejectsCombiningInspectAndNoInspect()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "--inspect", "--no-inspect"]);
+
+        Assert.NotNull(result.Error);
+        Assert.Null(result.Options);
     }
 
     [Fact]

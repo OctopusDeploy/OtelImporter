@@ -1,3 +1,5 @@
+using OtelImporter.Otlp;
+
 namespace OtelImporter.Export;
 
 // Wraps another exporter, retrying transient failures with exponential backoff.
@@ -23,13 +25,13 @@ internal sealed class RetryingTraceExporter : ITraceExporter
         _onRetry = onRetry;
     }
 
-    public async Task<ExportOutcome> ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
+    public async Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                return await _inner.ExportAsync(otlpJsonLine, cancellationToken).ConfigureAwait(false);
+                return await _inner.ExportAsync(request, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

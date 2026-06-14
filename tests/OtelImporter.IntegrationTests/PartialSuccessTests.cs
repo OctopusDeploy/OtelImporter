@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using OtelImporter.Configuration;
 using OtelImporter.Export;
+using OtelImporter.Otlp;
 
 namespace OtelImporter.IntegrationTests;
 
@@ -13,7 +14,7 @@ public class PartialSuccessTests
 {
     static string SamplePath => Path.Combine(AppContext.BaseDirectory, "TestData", "sample-traces.jsonl");
 
-    static (byte[] Line, int SpanCount) FirstBatch()
+    static (ExportTraceServiceRequest Request, int SpanCount) FirstBatch()
     {
         var line = File.ReadLines(SamplePath).First();
         using var document = JsonDocument.Parse(line);
@@ -22,7 +23,8 @@ public class PartialSuccessTests
             foreach (var ss in rs.GetProperty("scopeSpans").EnumerateArray())
                 if (ss.TryGetProperty("spans", out var s))
                     spans += s.GetArrayLength();
-        return (Encoding.UTF8.GetBytes(line), spans);
+        var request = JsonSerializer.Deserialize(Encoding.UTF8.GetBytes(line), OtlpJsonContext.Default.ExportTraceServiceRequest)!;
+        return (request, spans);
     }
 
     static ITraceExporter CreateExporter(Uri endpoint, OtlpProtocol protocol)
@@ -39,11 +41,11 @@ public class PartialSuccessTests
     public async Task SurfacesRejectedSpansFromPartialSuccess(string protocol)
     {
         await using var server = await TestOtlpServer.StartAsync(rejectAll: true);
-        var (line, spanCount) = FirstBatch();
+        var (request, spanCount) = FirstBatch();
         var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
 
         await using var exporter = CreateExporter(endpoint, protocol == "grpc" ? OtlpProtocol.Grpc : OtlpProtocol.Http);
-        var outcome = await exporter.ExportAsync(line, CancellationToken.None);
+        var outcome = await exporter.ExportAsync(request, CancellationToken.None);
 
         Assert.True(outcome.HasProblem);
         Assert.Equal(spanCount, outcome.RejectedSpans);
@@ -56,11 +58,11 @@ public class PartialSuccessTests
     public async Task ReportsCleanAcceptanceWhenCollectorAccepts(string protocol)
     {
         await using var server = await TestOtlpServer.StartAsync(rejectAll: false);
-        var (line, _) = FirstBatch();
+        var (request, _) = FirstBatch();
         var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
 
         await using var exporter = CreateExporter(endpoint, protocol == "grpc" ? OtlpProtocol.Grpc : OtlpProtocol.Http);
-        var outcome = await exporter.ExportAsync(line, CancellationToken.None);
+        var outcome = await exporter.ExportAsync(request, CancellationToken.None);
 
         Assert.False(outcome.HasProblem);
         Assert.Equal(0, outcome.RejectedSpans);

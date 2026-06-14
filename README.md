@@ -22,6 +22,7 @@ OtelImporter <input-file> --inspect
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
 | `--max-retries <n>`      | Retries per batch on transient failures (default: 4, `0` disables).|
 | `-i`, `--inspect`        | Read-only: summarise the file instead of exporting (see below).    |
+| `--no-inspect`           | Export without printing the end-of-run summary.                    |
 | `-h`, `--help`           | Show help.                                                         |
 
 Each line of the input file is one batch (one `ExportTraceServiceRequest`).
@@ -57,13 +58,18 @@ OtelImporter traces.jsonl.zst
 
 ## Inspecting a file
 
-`--inspect` (`-i`) does a read-only streaming pass over the file and prints a summary
-instead of exporting anything. All export options (`--endpoint`, `--protocol`,
-`--max-rate`, `--max-retries`) and the endpoint environment variables are ignored, so
-no upstream collector is needed.
+A normal export **also prints the summary below** when it finishes — the file is parsed
+once and fed to both the exporter and the inspector, so there's no extra pass. Use
+`--no-inspect` for a bare export with no summary.
+
+`--inspect` (`-i`) does the same summary as a *read-only* pass: nothing is exported. All
+export options (`--endpoint`, `--protocol`, `--max-rate`, `--max-retries`) and the
+endpoint environment variables are ignored, so no upstream collector is needed.
 
 ```bash
-OtelImporter traces.jsonl.zst --inspect
+OtelImporter traces.jsonl.zst --inspect             # summary only, no export
+OtelImporter traces.jsonl.zst -e <url>              # export, then summary
+OtelImporter traces.jsonl.zst -e <url> --no-inspect # export, no summary
 ```
 
 ```
