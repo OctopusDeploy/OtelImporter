@@ -7,6 +7,7 @@ internal sealed record CommandLineOptions
     public OtlpProtocol? Protocol { get; init; }
     public double? MaxBatchesPerSecond { get; init; }
     public int? MaxRetries { get; init; }
+    public bool Inspect { get; init; }
     public bool ShowHelp { get; init; }
 }
 
@@ -23,6 +24,7 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 //   --protocol, -p <value>  grpc | http (overrides port sniffing)
 //   --max-rate, -r <value>  throttle: maximum batches per second
 //   --max-retries <count>   retries per batch on transient failures (0 disables)
+//   --inspect, -i           read-only: summarise the file instead of exporting
 //   --help, -h              show usage
 internal static class CommandLineParser
 {
@@ -33,6 +35,7 @@ internal static class CommandLineParser
         OtlpProtocol? protocol = null;
         double? maxBatchesPerSecond = null;
         int? maxRetries = null;
+        var inspect = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -76,6 +79,11 @@ internal static class CommandLineParser
                     maxRetries = retries;
                     break;
 
+                case "--inspect":
+                case "-i":
+                    inspect = true;
+                    break;
+
                 default:
                     if (arg.StartsWith('-'))
                         return CommandLineParseResult.Failure($"Unknown option '{arg}'.");
@@ -93,6 +101,7 @@ internal static class CommandLineParser
             Protocol = protocol,
             MaxBatchesPerSecond = maxBatchesPerSecond,
             MaxRetries = maxRetries,
+            Inspect = inspect,
         });
     }
 

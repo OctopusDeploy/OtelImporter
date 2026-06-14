@@ -88,6 +88,16 @@ public class OtlpExportEndToEndTests
     }
 
     [Fact]
+    public async Task InspectSummarisesWithoutAnyEndpointConfigured()
+    {
+        // --inspect is read-only: it must succeed with no endpoint/env var set and
+        // without anything listening upstream.
+        var exitCode = await Importer.RunAsync([TestDataPath("sample-traces.jsonl"), "--inspect"]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
+    }
+
+    [Fact]
     public async Task ReturnsUsageErrorForMissingFile()
     {
         var exitCode = await Importer.RunAsync(

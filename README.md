@@ -11,6 +11,7 @@ line is one `ExportTraceServiceRequest`).
 
 ```
 OtelImporter <input-file> [--endpoint <url>] [--protocol <grpc|http>]
+OtelImporter <input-file> --inspect
 ```
 
 | Argument / Option        | Description                                                        |
@@ -20,6 +21,7 @@ OtelImporter <input-file> [--endpoint <url>] [--protocol <grpc|http>]
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
 | `--max-retries <n>`      | Retries per batch on transient failures (default: 4, `0` disables).|
+| `-i`, `--inspect`        | Read-only: summarise the file instead of exporting (see below).    |
 | `-h`, `--help`           | Show help.                                                         |
 
 Each line of the input file is one batch (one `ExportTraceServiceRequest`).
@@ -52,6 +54,37 @@ OtelImporter traces.jsonl --endpoint http://collector:8080 --protocol http
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 OtelImporter traces.jsonl.zst
 ```
+
+## Inspecting a file
+
+`--inspect` (`-i`) does a read-only streaming pass over the file and prints a summary
+instead of exporting anything. All export options (`--endpoint`, `--protocol`,
+`--max-rate`, `--max-retries`) and the endpoint environment variables are ignored, so
+no upstream collector is needed.
+
+```bash
+OtelImporter traces.jsonl.zst --inspect
+```
+
+```
+Summary:
+  Batches:  4
+  Spans:    139
+  Oldest:   2026-05-26 01:55:21.808 UTC
+  Newest:   2026-05-26 01:57:03.225 UTC
+  Duration: 1m 41s
+
+  Top 10 span name(s) by count:
+    27  EF SQL
+    24  SQL
+    ...
+```
+
+The summary reports the batch and span counts, the oldest/newest span start times and
+the wall-clock span between them, and the ten most common span names (grouped by the
+span `name`; nameless spans are counted as `<No Name>`). Everything is accumulated
+incrementally as the file streams — individual spans are never buffered, so the memory
+profile is the same as a normal import regardless of file size.
 
 ## Reliability
 

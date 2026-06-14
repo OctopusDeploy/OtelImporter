@@ -2,6 +2,7 @@ using System.Diagnostics;
 using OtelImporter.Configuration;
 using OtelImporter.Export;
 using OtelImporter.Input;
+using OtelImporter.Inspect;
 using OtelImporter.Pipeline;
 
 return await Importer.RunAsync(args);
@@ -39,6 +40,10 @@ internal static class Importer
             Console.Error.WriteLine($"error: input file not found: {options.InputFile}");
             return ExitCode.UsageError;
         }
+
+        // --inspect is a read-only pass: no export, so endpoint/protocol/rate/retry are all ignored.
+        if (options.Inspect)
+            return await RunInspectAsync(options.InputFile);
 
         var configuration = ExporterConfigurationResolver.Resolve(options, Environment.GetEnvironmentVariable);
         if (configuration.Error is not null)
@@ -121,6 +126,86 @@ internal static class Importer
         }
     }
 
+    static async Task<int> RunInspectAsync(string inputFile)
+    {
+        Console.WriteLine($"Inspecting '{inputFile}' (read-only, nothing will be exported)");
+
+        using var cancellation = new ConsoleCancellation();
+
+        var progress = new Progress<long>(count =>
+        {
+            if (count % 100 == 0)
+                Console.Write($"\r  read {count} batches...");
+        });
+
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var runner = new InspectRunner(new InputStreamFactory());
+            var summary = await runner.RunAsync(inputFile, progress, cancellation.Token);
+            stopwatch.Stop();
+
+            Console.Write("\r");
+            Console.WriteLine($"Done. Read {summary.BatchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
+            PrintSummary(summary);
+            return ExitCode.Success;
+        }
+        catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Cancelled.");
+            return ExitCode.Cancelled;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"error: {ex.Message}");
+            return ExitCode.RuntimeError;
+        }
+    }
+
+    static void PrintSummary(InspectionSummary summary)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Summary:");
+        Console.WriteLine($"  Batches:  {summary.BatchCount:N0}");
+        Console.WriteLine($"  Spans:    {summary.SpanCount:N0}");
+
+        if (summary is { OldestSpan: { } oldest, NewestSpan: { } newest, Duration: { } duration })
+        {
+            Console.WriteLine($"  Oldest:   {FormatTimestamp(oldest)}");
+            Console.WriteLine($"  Newest:   {FormatTimestamp(newest)}");
+            Console.WriteLine($"  Duration: {FormatDuration(duration)}");
+        }
+        else
+        {
+            Console.WriteLine("  Oldest:   n/a (no spans with a timestamp)");
+            Console.WriteLine("  Newest:   n/a");
+            Console.WriteLine("  Duration: n/a");
+        }
+
+        if (summary.TopSpanNames.Count == 0)
+            return;
+
+        Console.WriteLine();
+        Console.WriteLine($"  Top {summary.TopSpanNames.Count} span name(s) by count:");
+        var countWidth = summary.TopSpanNames.Max(s => s.Count).ToString("N0").Length;
+        foreach (var entry in summary.TopSpanNames)
+            Console.WriteLine($"    {entry.Count.ToString("N0").PadLeft(countWidth)}  {entry.Name}");
+    }
+
+    static string FormatTimestamp(DateTimeOffset value) =>
+        value.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+
+    static string FormatDuration(TimeSpan d)
+    {
+        if (d < TimeSpan.FromSeconds(1)) return $"{d.TotalMilliseconds:N0}ms";
+        if (d < TimeSpan.FromMinutes(1)) return $"{d.TotalSeconds:F2}s";
+        if (d < TimeSpan.FromHours(1)) return $"{(int)d.TotalMinutes}m {d.Seconds}s";
+        if (d < TimeSpan.FromDays(1)) return $"{(int)d.TotalHours}h {d.Minutes}m {d.Seconds}s";
+        return $"{(int)d.TotalDays}d {d.Hours}h {d.Minutes}m";
+    }
+
     static void PrintUsage(TextWriter writer)
     {
         writer.WriteLine("OtelImporter - stream OpenTelemetry trace files to an OTLP endpoint.");
@@ -128,6 +213,7 @@ internal static class Importer
         writer.WriteLine("Usage:");
         writer.WriteLine("  OtelImporter <input-file> [--endpoint <url>] [--protocol <grpc|http>]");
         writer.WriteLine("               [--max-rate <batches/sec>] [--max-retries <count>]");
+        writer.WriteLine("  OtelImporter <input-file> --inspect");
         writer.WriteLine();
         writer.WriteLine("Arguments:");
         writer.WriteLine("  <input-file>            Path to a .jsonl or .jsonl.zst OTLP trace file.");
@@ -137,6 +223,8 @@ internal static class Importer
         writer.WriteLine("  -p, --protocol <value>  'grpc' or 'http'. Overrides protocol sniffed from the port.");
         writer.WriteLine("  -r, --max-rate <n>      Throttle to at most n batches per second (default: unlimited).");
         writer.WriteLine("      --max-retries <n>   Retries per batch on transient failures (default: 4, 0 disables).");
+        writer.WriteLine("  -i, --inspect           Read-only: summarise the file instead of exporting.");
+        writer.WriteLine("                          Export options (endpoint, rate, retries) are ignored.");
         writer.WriteLine("  -h, --help              Show this help.");
         writer.WriteLine();
         writer.WriteLine("Endpoint resolution (highest precedence first):");

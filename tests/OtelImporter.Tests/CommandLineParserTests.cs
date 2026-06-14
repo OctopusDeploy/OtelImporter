@@ -38,6 +38,27 @@ public class CommandLineParserTests
         Assert.Equal(expected, result.Options!.Protocol);
     }
 
+    [Theory]
+    [InlineData("--inspect")]
+    [InlineData("-i")]
+    public void ParsesInspectFlag(string flag)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", flag]);
+
+        Assert.Null(result.Error);
+        Assert.True(result.Options!.Inspect);
+        Assert.Equal("traces.jsonl", result.Options.InputFile);
+    }
+
+    [Fact]
+    public void InspectDefaultsToFalse()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl"]);
+
+        Assert.Null(result.Error);
+        Assert.False(result.Options!.Inspect);
+    }
+
     [Fact]
     public void FlagsCanPrecedePositionalArgument()
     {
