@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OtelImporter/OtelImporter.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OtelImporter.Tests/OtelImporter.Tests.csproj" />
+    <Project Path="tests/OtelImporter.IntegrationTests/OtelImporter.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
