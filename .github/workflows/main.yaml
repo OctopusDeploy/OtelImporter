@@ -107,15 +107,16 @@ jobs:
       - name: Publish AOT binary
         run: dotnet publish src/OtelImporter/OtelImporter.csproj --configuration Release --runtime ${{ matrix.rid }} /p:Version=${{ needs.build.outputs.version }} /p:AssemblyVersion=${{ needs.build.outputs.majorminorpatch }} /p:FileVersion=${{ needs.build.outputs.majorminorpatch }} /p:InformationalVersion=${{ needs.build.outputs.informationalversion }} --output artifacts/publish
 
+      # Exclude debug symbols (.pdb / .dbg / .dSYM) from the shipped archives.
       - name: Package release zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path artifacts/publish/* -DestinationPath OtelImporter.${{ needs.build.outputs.version }}.${{ matrix.rid }}.zip
+        run: Get-ChildItem -Path artifacts/publish -Exclude *.pdb | Compress-Archive -DestinationPath OtelImporter.${{ needs.build.outputs.version }}.${{ matrix.rid }}.zip
 
       - name: Package release zip (Unix)
         if: runner.os != 'Windows'
         shell: bash
-        run: cd artifacts/publish && zip -r ../../OtelImporter.${{ needs.build.outputs.version }}.${{ matrix.rid }}.zip .
+        run: cd artifacts/publish && zip -r ../../OtelImporter.${{ needs.build.outputs.version }}.${{ matrix.rid }}.zip . -x '*.dSYM*' '*.dbg' '*.pdb'
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
