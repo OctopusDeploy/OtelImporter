@@ -1,0 +1,149 @@
+name: "Build, Test and Release"
+
+on:
+  push:
+    branches:
+      - main
+    tags-ignore:
+      - '**'
+  pull_request:
+    types: [opened, synchronize, reopened]
+  schedule:
+    # Weekly (on Monday) 6am australian/brisbane time (8pm UTC)
+    # Note that although it only runs once a week, we still use the -nightly suffix to align with our other repos
+    - cron: '0 20 * * 1'
+  workflow_dispatch:
+
+env:
+  OCTOVERSION_CurrentBranch: ${{ github.head_ref || github.ref }}
+
+jobs:
+  build:
+    name: "Build, Test and Release" # Branch protections required check matches against this
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required to obtain the ID token from GitHub Actions
+      contents: read # Required to check out code
+      checks: write # Required for test-reporter
+    outputs:
+      version: ${{ steps.version.outputs.octoversion_fullsemver }}
+      majorminorpatch: ${{ steps.version.outputs.octoversion_majorminorpatch }}
+      informationalversion: ${{ steps.version.outputs.octoversion_informationalversion }}
+    steps:
+      # Must clone the entire history for OctoVersion to work
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Append OCTOVERSION_CurrentBranch with -nightly-<timestamp> (for scheduled)
+        if: github.event_name == 'schedule'
+        run: echo "OCTOVERSION_CurrentBranch=${{ env.OCTOVERSION_CurrentBranch }}-nightly-$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
+
+      - name: Install OctoVersion
+        run: dotnet tool install --global Octopus.OctoVersion.Tool
+
+      - name: Determine version
+        id: version
+        run: ~/.dotnet/tools/octoversion --DetectEnvironment true
+
+      - name: Restore
+        run: dotnet restore OtelImporter.slnx
+
+      - name: Build
+        run: dotnet build OtelImporter.slnx --configuration Release --no-restore /p:Version=${{ steps.version.outputs.octoversion_fullsemver }} /p:AssemblyVersion=${{ steps.version.outputs.octoversion_majorminorpatch }} /p:FileVersion=${{ steps.version.outputs.octoversion_majorminorpatch }} /p:InformationalVersion=${{ steps.version.outputs.octoversion_informationalversion }}
+
+      - name: Unit tests
+        run: dotnet test tests/OtelImporter.Tests/OtelImporter.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=unit-tests.trx" --results-directory ${{ github.workspace }}/TestResults
+
+      # Integration tests stand up a real ASP.NET Core OTLP receiver (gRPC + HTTP) and exercise the importer end to end.
+      - name: Integration tests
+        run: dotnet test tests/OtelImporter.IntegrationTests/OtelImporter.IntegrationTests.csproj --configuration Release --no-build --logger "trx;LogFileName=integration-tests.trx" --results-directory ${{ github.workspace }}/TestResults
+
+      - name: Publish test results
+        uses: dorny/test-reporter@6e6a65b7a0bd2c9197df7d0ae36ac5cee784230c # v2.0.0
+        if: success() || failure()
+        with:
+          name: Test Results
+          path: TestResults/*.trx
+          reporter: dotnet-trx
+          fail-on-error: true
+
+  # Native AOT cannot cross-compile between operating systems, so each binary is
+  # published on a matching runner. Build + test already ran on Linux above.
+  publish:
+    name: "Publish ${{ matrix.rid }}"
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish AOT binary
+        run: dotnet publish src/OtelImporter/OtelImporter.csproj --configuration Release --runtime ${{ matrix.rid }} /p:Version=${{ needs.build.outputs.version }} /p:AssemblyVersion=${{ needs.build.outputs.majorminorpatch }} /p:FileVersion=${{ needs.build.outputs.majorminorpatch }} /p:InformationalVersion=${{ needs.build.outputs.informationalversion }} --output artifacts/publish
+
+      - name: Package release zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path artifacts/publish/* -DestinationPath OtelImporter.${{ needs.build.outputs.version }}.${{ matrix.rid }}.zip
+
+      - name: Package release zip (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cd artifacts/publish && zip -r ../../OtelImporter.${{ needs.build.outputs.version }}.${{ matrix.rid }}.zip .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OtelImporter-${{ matrix.rid }}
+          path: OtelImporter.${{ needs.build.outputs.version }}.${{ matrix.rid }}.zip
+          if-no-files-found: error
+
+  # Only create releases from main branch, not for scheduled or manual runs.
+  release:
+    name: "Create GitHub Release"
+    needs: [build, publish]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create Git tags & releases
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          tag_name: ${{ needs.build.outputs.version }}
+          name: ${{ needs.build.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ contains(needs.build.outputs.version, '-') }}
+          generate_release_notes: true
+          files: artifacts/**/*.zip
