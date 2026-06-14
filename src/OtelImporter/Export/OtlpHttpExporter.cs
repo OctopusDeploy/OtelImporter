@@ -4,10 +4,11 @@ using OtelImporter.Otlp;
 
 namespace OtelImporter.Export;
 
-// Exports over OTLP/HTTP. The input *.jsonl lines are already encoded as
-// ExportTraceServiceRequest in OTLP/JSON, which is exactly what the /v1/traces
-// endpoint accepts with Content-Type: application/json -- so we forward the raw
-// bytes without parsing or re-serializing.
+// Exports over OTLP/HTTP. The input *.jsonl lines are already OTLP/JSON, but rather
+// than forwarding the raw bytes we parse each line into the object model and
+// re-serialize it on the way out. This mirrors the gRPC path (which parses then
+// re-encodes as protobuf), giving both paths parity and a single place to manipulate
+// traces in-flight before they're sent.
 internal sealed class OtlpHttpExporter : ITraceExporter
 {
     static readonly MediaTypeHeaderValue Json = new("application/json");
@@ -25,7 +26,14 @@ internal sealed class OtlpHttpExporter : ITraceExporter
 
     public async Task<ExportOutcome> ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
     {
-        using var content = new ReadOnlyMemoryContent(otlpJsonLine);
+        var request = JsonSerializer.Deserialize(otlpJsonLine.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
+                      ?? throw new TraceExportException("Trace line deserialized to null.");
+
+        // (trace manipulation will hook in here, operating on `request`)
+
+        var json = JsonSerializer.SerializeToUtf8Bytes(request, OtlpJsonContext.Default.ExportTraceServiceRequest);
+
+        using var content = new ByteArrayContent(json);
         content.Headers.ContentType = Json;
 
         using var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken).ConfigureAwait(false);
