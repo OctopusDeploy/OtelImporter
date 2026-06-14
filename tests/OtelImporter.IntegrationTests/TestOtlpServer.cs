@@ -35,7 +35,9 @@ public sealed class TestOtlpServer : IAsyncDisposable
         HttpEndpoint = new Uri($"http://127.0.0.1:{httpPort}");
     }
 
-    public static async Task<TestOtlpServer> StartAsync()
+    public const string RejectionMessage = "test rejection";
+
+    public static async Task<TestOtlpServer> StartAsync(bool rejectAll = false)
     {
         var grpcPort = GetFreePort();
         var httpPort = GetFreePort();
@@ -46,6 +48,7 @@ public sealed class TestOtlpServer : IAsyncDisposable
 
         var received = new ReceivedTraces();
         builder.Services.AddSingleton(received);
+        builder.Services.AddSingleton(new ServerOptions(rejectAll));
 
         builder.WebHost.ConfigureKestrel(options =>
         {
@@ -60,11 +63,22 @@ public sealed class TestOtlpServer : IAsyncDisposable
         app.MapPost("/v1/traces", async context =>
         {
             using var document = await JsonDocument.ParseAsync(context.Request.Body);
-            context.RequestServices.GetRequiredService<ReceivedTraces>().Record(CountSpans(document.RootElement));
+            var spans = CountSpans(document.RootElement);
+            context.RequestServices.GetRequiredService<ReceivedTraces>().Record(spans);
 
             context.Response.StatusCode = 200;
             context.Response.ContentType = "application/json";
-            await context.Response.WriteAsync("{}"); // empty ExportTraceServiceResponse
+
+            if (context.RequestServices.GetRequiredService<ServerOptions>().RejectAll)
+            {
+                // OTLP/JSON encodes int64 (rejectedSpans) as a string.
+                await context.Response.WriteAsync(
+                    $"{{\"partialSuccess\":{{\"rejectedSpans\":\"{spans}\",\"errorMessage\":\"{RejectionMessage}\"}}}}");
+            }
+            else
+            {
+                await context.Response.WriteAsync("{}"); // empty ExportTraceServiceResponse
+            }
         });
 
         var server = new TestOtlpServer(app, received, grpcPort, httpPort);
@@ -108,8 +122,10 @@ public sealed class TestOtlpServer : IAsyncDisposable
         await _app.DisposeAsync();
     }
 
+    sealed record ServerOptions(bool RejectAll);
+
     // Generated from collector/trace/v1/trace_service.proto (GrpcServices=Server).
-    sealed class TestTraceService(ReceivedTraces received) : TraceService.TraceServiceBase
+    sealed class TestTraceService(ReceivedTraces received, ServerOptions options) : TraceService.TraceServiceBase
     {
         public override Task<ExportTraceServiceResponse> Export(ExportTraceServiceRequest request, ServerCallContext context)
         {
@@ -119,7 +135,18 @@ public sealed class TestOtlpServer : IAsyncDisposable
                 spans += scopeSpans.Spans.Count;
 
             received.Record(spans);
-            return Task.FromResult(new ExportTraceServiceResponse());
+
+            var response = new ExportTraceServiceResponse();
+            if (options.RejectAll)
+            {
+                response.PartialSuccess = new ExportTracePartialSuccess
+                {
+                    RejectedSpans = spans,
+                    ErrorMessage = RejectionMessage,
+                };
+            }
+
+            return Task.FromResult(response);
         }
     }
 }

@@ -64,12 +64,28 @@ internal static class Importer
                 Console.Write($"\r  exported {count} batches...");
         });
 
+        void ReportDiagnostic(string message)
+        {
+            // Clear the in-place progress line before writing a warning so it isn't overwritten.
+            Console.Write("\r");
+            Console.Error.WriteLine($"warning: {message}");
+        }
+
         try
         {
-            var result = await runner.RunAsync(options.InputFile, progress, cancellation.Token);
+            var result = await runner.RunAsync(options.InputFile, progress, ReportDiagnostic, cancellation.Token);
             stopwatch.Stop();
             Console.Write("\r");
             Console.WriteLine($"Done. Exported {result.BatchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
+
+            if (result.RejectedSpanCount > 0)
+            {
+                Console.Error.WriteLine(
+                    $"WARNING: the collector rejected {result.RejectedSpanCount} span(s). " +
+                    "They were accepted at the transport level but not stored upstream (see warnings above).");
+                return ExitCode.PartialSuccess;
+            }
+
             return ExitCode.Success;
         }
         catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested)
@@ -146,5 +162,6 @@ internal static class ExitCode
     public const int Success = 0;
     public const int UsageError = 1;
     public const int RuntimeError = 2;
+    public const int PartialSuccess = 3; // exported, but the collector rejected some spans
     public const int Cancelled = 130;
 }

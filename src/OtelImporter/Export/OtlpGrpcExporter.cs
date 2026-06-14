@@ -29,7 +29,7 @@ internal sealed class OtlpGrpcExporter : ITraceExporter
         _ownsHttpClient = ownsHttpClient;
     }
 
-    public async Task ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
+    public async Task<ExportOutcome> ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
     {
         var request = JsonSerializer.Deserialize(otlpJsonLine.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
                       ?? throw new TraceExportException("Trace line deserialized to null.");
@@ -53,7 +53,7 @@ internal sealed class OtlpGrpcExporter : ITraceExporter
             .ConfigureAwait(false);
 
         // The body must be drained before trailing headers (grpc-status) are available.
-        await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var responseBody = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
 
         if (response.StatusCode != HttpStatusCode.OK)
             throw new TraceExportException($"OTLP/gRPC export to {_endpoint} returned HTTP {(int)response.StatusCode}.");
@@ -65,6 +65,53 @@ internal sealed class OtlpGrpcExporter : ITraceExporter
                 $"OTLP/gRPC export to {_endpoint} failed with grpc-status {status}" +
                 (string.IsNullOrEmpty(message) ? "." : $": {message}"));
         }
+
+        return ParsePartialSuccess(responseBody);
+    }
+
+    // The gRPC response is a length-prefixed protobuf ExportTraceServiceResponse:
+    //   ExportTraceServiceResponse { ExportTracePartialSuccess partial_success = 1; }
+    //   ExportTracePartialSuccess { int64 rejected_spans = 1; string error_message = 2; }
+    static ExportOutcome ParsePartialSuccess(ReadOnlySpan<byte> framedResponse)
+    {
+        if (framedResponse.Length <= 5) // 1-byte flag + 4-byte length, no message
+            return ExportOutcome.Accepted;
+
+        var length = (int)ProtoReader.ReadFixed32BigEndian(framedResponse.Slice(1, 4));
+        var message = framedResponse.Slice(5, Math.Min(length, framedResponse.Length - 5));
+
+        var partial = FindLengthDelimited(message, fieldNumber: 1);
+        if (partial.IsEmpty)
+            return ExportOutcome.Accepted;
+
+        long rejectedSpans = 0;
+        string? errorMessage = null;
+        var reader = new ProtoReader(partial);
+        while (!reader.End)
+        {
+            var (field, wireType) = reader.ReadTag();
+            switch (field, wireType)
+            {
+                case (1, 0): rejectedSpans = (long)reader.ReadVarint(); break;
+                case (2, 2): errorMessage = System.Text.Encoding.UTF8.GetString(reader.ReadLengthDelimited()); break;
+                default: reader.Skip(wireType); break;
+            }
+        }
+
+        return new ExportOutcome(rejectedSpans, errorMessage);
+    }
+
+    static ReadOnlySpan<byte> FindLengthDelimited(ReadOnlySpan<byte> message, int fieldNumber)
+    {
+        var reader = new ProtoReader(message);
+        while (!reader.End)
+        {
+            var (field, wireType) = reader.ReadTag();
+            if (field == fieldNumber && wireType == 2)
+                return reader.ReadLengthDelimited();
+            reader.Skip(wireType);
+        }
+        return default;
     }
 
     const int GrpcStatusOk = 0;

@@ -31,6 +31,41 @@ public class ImportRunnerTests
         Assert.Equal([1, 2, 3], progress.Reports);
     }
 
+    [Fact]
+    public async Task Aggregates_rejected_spans_and_emits_a_diagnostic_per_problem_batch()
+    {
+        var input = new StubInputStreamFactory("1\n2\n3\n");
+        // Batches 1 and 3 report rejections; batch 2 is clean.
+        var exporter = new RecordingExporter(line => line switch
+        {
+            "1" => new ExportOutcome(5, "schema mismatch"),
+            "3" => new ExportOutcome(2, null),
+            _ => ExportOutcome.Accepted,
+        });
+        var diagnostics = new List<string>();
+
+        var result = await new ImportRunner(input, exporter).RunAsync("ignored", onDiagnostic: diagnostics.Add);
+
+        Assert.Equal(3, result.BatchCount);
+        Assert.Equal(7, result.RejectedSpanCount);
+        Assert.Equal(2, diagnostics.Count);
+        Assert.Contains("rejected 5 span(s): schema mismatch", diagnostics[0]);
+        Assert.Contains("rejected 2 span(s)", diagnostics[1]);
+    }
+
+    [Fact]
+    public async Task No_diagnostics_when_everything_is_accepted()
+    {
+        var input = new StubInputStreamFactory("1\n2\n");
+        var exporter = new RecordingExporter();
+        var diagnostics = new List<string>();
+
+        var result = await new ImportRunner(input, exporter).RunAsync("ignored", onDiagnostic: diagnostics.Add);
+
+        Assert.Equal(0, result.RejectedSpanCount);
+        Assert.Empty(diagnostics);
+    }
+
     // Deterministic, synchronous progress sink (Progress<T> dispatches asynchronously).
     sealed class SynchronousProgress : IProgress<long>
     {
@@ -43,14 +78,17 @@ public class ImportRunnerTests
         public Stream Open(string path) => new MemoryStream(Encoding.UTF8.GetBytes(content));
     }
 
-    sealed class RecordingExporter : ITraceExporter
+    sealed class RecordingExporter(Func<string, ExportOutcome>? outcome = null) : ITraceExporter
     {
+        readonly Func<string, ExportOutcome> _outcome = outcome ?? (_ => ExportOutcome.Accepted);
+
         public List<string> Exported { get; } = [];
 
-        public Task ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
+        public Task<ExportOutcome> ExportAsync(ReadOnlyMemory<byte> otlpJsonLine, CancellationToken cancellationToken)
         {
-            Exported.Add(Encoding.UTF8.GetString(otlpJsonLine.Span));
-            return Task.CompletedTask;
+            var line = Encoding.UTF8.GetString(otlpJsonLine.Span);
+            Exported.Add(line);
+            return Task.FromResult(_outcome(line));
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

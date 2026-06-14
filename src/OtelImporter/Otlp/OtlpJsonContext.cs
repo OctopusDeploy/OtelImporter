@@ -9,6 +9,7 @@ namespace OtelImporter.Otlp;
 // accepting plain JSON numbers.
 [JsonSourceGenerationOptions(NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 [JsonSerializable(typeof(ExportTraceServiceRequest))]
+[JsonSerializable(typeof(ExportTraceServiceResponse))]
 internal partial class OtlpJsonContext : JsonSerializerContext
 {
 }

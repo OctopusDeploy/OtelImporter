@@ -14,6 +14,19 @@ internal sealed class ExportTraceServiceRequest
     [JsonPropertyName("resourceSpans")] public List<ResourceSpans>? ResourceSpans { get; set; }
 }
 
+// The collector's reply. A 2xx/OK does NOT guarantee acceptance: the collector may
+// return partial_success with a count of rejected spans and a diagnostic message.
+internal sealed class ExportTraceServiceResponse
+{
+    [JsonPropertyName("partialSuccess")] public ExportTracePartialSuccess? PartialSuccess { get; set; }
+}
+
+internal sealed class ExportTracePartialSuccess
+{
+    [JsonPropertyName("rejectedSpans")] public long RejectedSpans { get; set; }
+    [JsonPropertyName("errorMessage")] public string? ErrorMessage { get; set; }
+}
+
 internal sealed class ResourceSpans
 {
     [JsonPropertyName("resource")] public Resource? Resource { get; set; }
