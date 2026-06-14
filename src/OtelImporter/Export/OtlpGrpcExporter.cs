@@ -56,18 +56,30 @@ internal sealed class OtlpGrpcExporter : ITraceExporter
         var responseBody = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
 
         if (response.StatusCode != HttpStatusCode.OK)
-            throw new TraceExportException($"OTLP/gRPC export to {_endpoint} returned HTTP {(int)response.StatusCode}.");
+        {
+            throw new TraceExportException($"OTLP/gRPC export to {_endpoint} returned HTTP {(int)response.StatusCode}.")
+            {
+                IsRetryable = (int)response.StatusCode is 502 or 503 or 504,
+            };
+        }
 
         var (status, message) = ReadGrpcStatus(response);
         if (status != GrpcStatusOk)
         {
             throw new TraceExportException(
                 $"OTLP/gRPC export to {_endpoint} failed with grpc-status {status}" +
-                (string.IsNullOrEmpty(message) ? "." : $": {message}"));
+                (string.IsNullOrEmpty(message) ? "." : $": {message}"))
+            {
+                IsRetryable = IsRetryableGrpcStatus(status),
+            };
         }
 
         return ParsePartialSuccess(responseBody);
     }
+
+    // UNAVAILABLE (14) and RESOURCE_EXHAUSTED (8) are the transient gRPC status codes
+    // an OTLP exporter should retry.
+    static bool IsRetryableGrpcStatus(int status) => status is 8 or 14;
 
     // The gRPC response is a length-prefixed protobuf ExportTraceServiceResponse:
     //   ExportTraceServiceResponse { ExportTracePartialSuccess partial_success = 1; }

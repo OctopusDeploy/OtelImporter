@@ -48,21 +48,15 @@ internal static class Importer
         }
 
         var resolved = configuration.Configuration!;
+        var retryOptions = RetryOptions.FromMaxRetries(options.MaxRetries ?? RetryOptions.Default.MaxAttempts - 1);
+
         Console.WriteLine($"Importing '{options.InputFile}'");
         Console.WriteLine($"  -> {resolved.Protocol.ToString().ToUpperInvariant()} {resolved.Endpoint}");
+        if (options.MaxBatchesPerSecond is { } rate)
+            Console.WriteLine($"  rate limit: {rate:G} batches/sec");
+        Console.WriteLine($"  retries: up to {retryOptions.MaxAttempts - 1} per batch on transient failures");
 
         using var cancellation = new ConsoleCancellation();
-
-        var factory = new ExporterFactory();
-        await using var exporter = factory.Create(resolved);
-        var runner = new ImportRunner(new InputStreamFactory(), exporter);
-
-        var stopwatch = Stopwatch.StartNew();
-        var progress = new Progress<long>(count =>
-        {
-            if (count % 100 == 0)
-                Console.Write($"\r  exported {count} batches...");
-        });
 
         void ReportDiagnostic(string message)
         {
@@ -70,6 +64,25 @@ internal static class Importer
             Console.Write("\r");
             Console.Error.WriteLine($"warning: {message}");
         }
+
+        var factory = new ExporterFactory();
+        var baseExporter = factory.Create(resolved);
+        await using ITraceExporter exporter = retryOptions.MaxAttempts > 1
+            ? new RetryingTraceExporter(baseExporter, retryOptions, TimeProvider.System, ReportDiagnostic)
+            : baseExporter;
+
+        IRateLimiter? rateLimiter = options.MaxBatchesPerSecond is { } batchesPerSecond
+            ? new BatchRateLimiter(batchesPerSecond, TimeProvider.System)
+            : null;
+
+        var runner = new ImportRunner(new InputStreamFactory(), exporter, rateLimiter);
+
+        var stopwatch = Stopwatch.StartNew();
+        var progress = new Progress<long>(count =>
+        {
+            if (count % 100 == 0)
+                Console.Write($"\r  exported {count} batches...");
+        });
 
         try
         {
@@ -114,6 +127,7 @@ internal static class Importer
         writer.WriteLine();
         writer.WriteLine("Usage:");
         writer.WriteLine("  OtelImporter <input-file> [--endpoint <url>] [--protocol <grpc|http>]");
+        writer.WriteLine("               [--max-rate <batches/sec>] [--max-retries <count>]");
         writer.WriteLine();
         writer.WriteLine("Arguments:");
         writer.WriteLine("  <input-file>            Path to a .jsonl or .jsonl.zst OTLP trace file.");
@@ -121,6 +135,8 @@ internal static class Importer
         writer.WriteLine("Options:");
         writer.WriteLine("  -e, --endpoint <url>    Upstream OTLP endpoint. Overrides environment variables.");
         writer.WriteLine("  -p, --protocol <value>  'grpc' or 'http'. Overrides protocol sniffed from the port.");
+        writer.WriteLine("  -r, --max-rate <n>      Throttle to at most n batches per second (default: unlimited).");
+        writer.WriteLine("      --max-retries <n>   Retries per batch on transient failures (default: 4, 0 disables).");
         writer.WriteLine("  -h, --help              Show this help.");
         writer.WriteLine();
         writer.WriteLine("Endpoint resolution (highest precedence first):");

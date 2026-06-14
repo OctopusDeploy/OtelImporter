@@ -60,6 +60,47 @@ public class CommandLineParserTests
         Assert.True(result.Options!.ShowHelp);
     }
 
+    [Theory]
+    [InlineData("--max-rate", "50", 50.0)]
+    [InlineData("-r", "12.5", 12.5)]
+    public void Parses_max_rate(string flag, string value, double expected)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", flag, value]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(expected, result.Options!.MaxBatchesPerSecond);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("abc")]
+    public void Rejects_invalid_max_rate(string value)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "--max-rate", value]);
+
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public void Parses_max_retries()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "--max-retries", "0"]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(0, result.Options!.MaxRetries);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("notanumber")]
+    public void Rejects_invalid_max_retries(string value)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "--max-retries", value]);
+
+        Assert.NotNull(result.Error);
+    }
+
     [Fact]
     public void Rejects_invalid_protocol()
     {

@@ -35,6 +35,44 @@ public class OtlpExportEndToEndTests
         Assert.Equal(ExpectedSpans, server.Received.SpanCount);
     }
 
+    [Theory]
+    [InlineData("http")]
+    [InlineData("grpc")]
+    public async Task Recovers_from_transient_failures_via_retry(string protocol)
+    {
+        // The server fails the first two requests (503 / gRPC UNAVAILABLE); retry-with-backoff
+        // should recover so every span still lands.
+        await using var server = await TestOtlpServer.StartAsync(failFirstRequests: 2);
+        var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
+
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--endpoint", endpoint.ToString(),
+            "--protocol", protocol,
+        ]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
+        Assert.Equal(ExpectedSpans, server.Received.SpanCount);
+    }
+
+    [Fact]
+    public async Task Returns_runtime_error_when_retries_are_exhausted()
+    {
+        // More failures than retries (default 4) => the import ultimately fails.
+        await using var server = await TestOtlpServer.StartAsync(failFirstRequests: 99);
+
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--endpoint", server.HttpEndpoint.ToString(),
+            "--protocol", "http",
+            "--max-retries", "1",
+        ]);
+
+        Assert.Equal(ExitCode.RuntimeError, exitCode);
+    }
+
     [Fact]
     public async Task Returns_runtime_error_when_upstream_is_unreachable()
     {

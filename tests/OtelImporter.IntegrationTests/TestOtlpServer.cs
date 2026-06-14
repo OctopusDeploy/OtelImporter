@@ -37,7 +37,9 @@ public sealed class TestOtlpServer : IAsyncDisposable
 
     public const string RejectionMessage = "test rejection";
 
-    public static async Task<TestOtlpServer> StartAsync(bool rejectAll = false)
+    // rejectAll        => respond OK but report every span rejected via partial_success.
+    // failFirstRequests => fail the first N requests transiently (503 / UNAVAILABLE) before succeeding.
+    public static async Task<TestOtlpServer> StartAsync(bool rejectAll = false, int failFirstRequests = 0)
     {
         var grpcPort = GetFreePort();
         var httpPort = GetFreePort();
@@ -48,7 +50,7 @@ public sealed class TestOtlpServer : IAsyncDisposable
 
         var received = new ReceivedTraces();
         builder.Services.AddSingleton(received);
-        builder.Services.AddSingleton(new ServerOptions(rejectAll));
+        builder.Services.AddSingleton(new ServerOptions { RejectAll = rejectAll, FailuresRemaining = failFirstRequests });
 
         builder.WebHost.ConfigureKestrel(options =>
         {
@@ -62,6 +64,13 @@ public sealed class TestOtlpServer : IAsyncDisposable
         app.MapGrpcService<TestTraceService>();
         app.MapPost("/v1/traces", async context =>
         {
+            var options = context.RequestServices.GetRequiredService<ServerOptions>();
+            if (Interlocked.Decrement(ref options.FailuresRemaining) >= 0)
+            {
+                context.Response.StatusCode = 503; // transient failure, before recording anything
+                return;
+            }
+
             using var document = await JsonDocument.ParseAsync(context.Request.Body);
             var spans = CountSpans(document.RootElement);
             context.RequestServices.GetRequiredService<ReceivedTraces>().Record(spans);
@@ -69,7 +78,7 @@ public sealed class TestOtlpServer : IAsyncDisposable
             context.Response.StatusCode = 200;
             context.Response.ContentType = "application/json";
 
-            if (context.RequestServices.GetRequiredService<ServerOptions>().RejectAll)
+            if (options.RejectAll)
             {
                 // OTLP/JSON encodes int64 (rejectedSpans) as a string.
                 await context.Response.WriteAsync(
@@ -122,13 +131,20 @@ public sealed class TestOtlpServer : IAsyncDisposable
         await _app.DisposeAsync();
     }
 
-    sealed record ServerOptions(bool RejectAll);
+    sealed class ServerOptions
+    {
+        public bool RejectAll { get; init; }
+        public int FailuresRemaining; // mutated atomically across requests
+    }
 
     // Generated from collector/trace/v1/trace_service.proto (GrpcServices=Server).
     sealed class TestTraceService(ReceivedTraces received, ServerOptions options) : TraceService.TraceServiceBase
     {
         public override Task<ExportTraceServiceResponse> Export(ExportTraceServiceRequest request, ServerCallContext context)
         {
+            if (Interlocked.Decrement(ref options.FailuresRemaining) >= 0)
+                throw new RpcException(new Status(StatusCode.Unavailable, "transient failure"));
+
             var spans = 0;
             foreach (var resourceSpans in request.ResourceSpans)
             foreach (var scopeSpans in resourceSpans.ScopeSpans)

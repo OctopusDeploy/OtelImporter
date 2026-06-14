@@ -18,7 +18,11 @@ OtelImporter <input-file> [--endpoint <url>] [--protocol <grpc|http>]
 | `<input-file>`           | Path to a `.jsonl` or `.jsonl.zst` OTLP trace file (positional).   |
 | `-e`, `--endpoint <url>` | Upstream OTLP endpoint. Overrides the environment variables.       |
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
+| `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
+| `--max-retries <n>`      | Retries per batch on transient failures (default: 4, `0` disables).|
 | `-h`, `--help`           | Show help.                                                         |
+
+Each line of the input file is one batch (one `ExportTraceServiceRequest`).
 
 ### Endpoint resolution (highest precedence first)
 
@@ -48,6 +52,29 @@ OtelImporter traces.jsonl --endpoint http://collector:8080 --protocol http
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 OtelImporter traces.jsonl.zst
 ```
+
+## Reliability
+
+- **Partial success surfacing.** A collector can return HTTP 2xx / gRPC OK and still
+  reject spans via `partial_success`. The importer parses the response (JSON for HTTP,
+  protobuf for gRPC) and prints a warning per affected batch plus a final total. If any
+  spans were rejected it exits **3** so the condition is scriptable.
+- **Retry with backoff.** Transient failures (HTTP `408/429/502/503/504`, gRPC
+  `UNAVAILABLE`/`RESOURCE_EXHAUSTED`, and network/timeout errors) are retried with
+  exponential backoff (honouring `Retry-After`). Tune with `--max-retries`.
+- **Rate limiting.** A bulk import can overrun a collector's export queue sized for
+  steady-state traffic (spans get dropped downstream, *after* an OK response). Use
+  `--max-rate` to pace sending.
+
+### Exit codes
+
+| Code | Meaning                                                        |
+| ---- | ------------------------------------------------------------- |
+| 0    | Success.                                                       |
+| 1    | Usage error (bad arguments, missing file).                    |
+| 2    | Runtime error (export failed after retries).                  |
+| 3    | Exported, but the collector rejected some spans.              |
+| 130  | Cancelled (Ctrl+C).                                           |
 
 ## Design notes
 

@@ -5,6 +5,8 @@ internal sealed record CommandLineOptions
     public string? InputFile { get; init; }
     public string? Endpoint { get; init; }
     public OtlpProtocol? Protocol { get; init; }
+    public double? MaxBatchesPerSecond { get; init; }
+    public int? MaxRetries { get; init; }
     public bool ShowHelp { get; init; }
 }
 
@@ -19,6 +21,8 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 //   <input-file>            positional, the *.jsonl or *.jsonl.zst trace file
 //   --endpoint, -e <url>    upstream OTLP endpoint (overrides environment variables)
 //   --protocol, -p <value>  grpc | http (overrides port sniffing)
+//   --max-rate, -r <value>  throttle: maximum batches per second
+//   --max-retries <count>   retries per batch on transient failures (0 disables)
 //   --help, -h              show usage
 internal static class CommandLineParser
 {
@@ -27,6 +31,8 @@ internal static class CommandLineParser
         string? inputFile = null;
         string? endpoint = null;
         OtlpProtocol? protocol = null;
+        double? maxBatchesPerSecond = null;
+        int? maxRetries = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -53,6 +59,23 @@ internal static class CommandLineParser
                     protocol = parsedProtocol;
                     break;
 
+                case "--max-rate":
+                case "-r":
+                    if (!TryTakeValue(args, ref i, out var rateValue))
+                        return CommandLineParseResult.Failure($"Missing value for {arg}.");
+                    if (!double.TryParse(rateValue, System.Globalization.CultureInfo.InvariantCulture, out var rate) || rate <= 0 || double.IsNaN(rate) || double.IsInfinity(rate))
+                        return CommandLineParseResult.Failure($"Invalid value '{rateValue}' for {arg}. Expected a positive number of batches per second.");
+                    maxBatchesPerSecond = rate;
+                    break;
+
+                case "--max-retries":
+                    if (!TryTakeValue(args, ref i, out var retriesValue))
+                        return CommandLineParseResult.Failure($"Missing value for {arg}.");
+                    if (!int.TryParse(retriesValue, System.Globalization.CultureInfo.InvariantCulture, out var retries) || retries < 0)
+                        return CommandLineParseResult.Failure($"Invalid value '{retriesValue}' for {arg}. Expected a non-negative integer.");
+                    maxRetries = retries;
+                    break;
+
                 default:
                     if (arg.StartsWith('-'))
                         return CommandLineParseResult.Failure($"Unknown option '{arg}'.");
@@ -68,6 +91,8 @@ internal static class CommandLineParser
             InputFile = inputFile,
             Endpoint = endpoint,
             Protocol = protocol,
+            MaxBatchesPerSecond = maxBatchesPerSecond,
+            MaxRetries = maxRetries,
         });
     }
 

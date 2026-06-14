@@ -12,11 +12,13 @@ internal sealed class ImportRunner
 {
     readonly IInputStreamFactory _inputStreamFactory;
     readonly ITraceExporter _exporter;
+    readonly IRateLimiter? _rateLimiter;
 
-    public ImportRunner(IInputStreamFactory inputStreamFactory, ITraceExporter exporter)
+    public ImportRunner(IInputStreamFactory inputStreamFactory, ITraceExporter exporter, IRateLimiter? rateLimiter = null)
     {
         _inputStreamFactory = inputStreamFactory;
         _exporter = exporter;
+        _rateLimiter = rateLimiter;
     }
 
     public async Task<ImportResult> RunAsync(
@@ -31,6 +33,9 @@ internal sealed class ImportRunner
         var rejectedSpanCount = 0L;
         await foreach (var line in JsonlLineReader.ReadLinesAsync(stream, cancellationToken).ConfigureAwait(false))
         {
+            if (_rateLimiter is not null)
+                await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+
             var outcome = await _exporter.ExportAsync(line, cancellationToken).ConfigureAwait(false);
             batchCount++;
 

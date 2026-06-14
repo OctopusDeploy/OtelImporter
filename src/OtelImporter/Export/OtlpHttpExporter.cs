@@ -35,10 +35,43 @@ internal sealed class OtlpHttpExporter : ITraceExporter
         {
             throw new TraceExportException(
                 $"OTLP/HTTP export to {_endpoint} failed with status {(int)response.StatusCode} {response.ReasonPhrase}. " +
-                System.Text.Encoding.UTF8.GetString(body).Trim());
+                System.Text.Encoding.UTF8.GetString(body).Trim())
+            {
+                IsRetryable = IsRetryableStatus(response.StatusCode),
+                RetryAfter = GetRetryAfter(response),
+            };
         }
 
         return ParsePartialSuccess(body);
+    }
+
+    // Per the OTLP/HTTP spec these statuses are transient and should be retried.
+    static bool IsRetryableStatus(System.Net.HttpStatusCode status) => (int)status switch
+    {
+        408 => true, // Request Timeout
+        429 => true, // Too Many Requests
+        502 => true, // Bad Gateway
+        503 => true, // Service Unavailable
+        504 => true, // Gateway Timeout
+        _ => false,
+    };
+
+    static TimeSpan? GetRetryAfter(HttpResponseMessage response)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+        if (retryAfter is null)
+            return null;
+
+        if (retryAfter.Delta is { } delta)
+            return delta;
+
+        if (retryAfter.Date is { } date)
+        {
+            var wait = date - DateTimeOffset.UtcNow;
+            return wait > TimeSpan.Zero ? wait : TimeSpan.Zero;
+        }
+
+        return null;
     }
 
     // The OTLP/HTTP success response is a JSON ExportTraceServiceResponse, usually "{}".
