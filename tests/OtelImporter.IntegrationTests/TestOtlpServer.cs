@@ -73,6 +73,8 @@ public sealed class TestOtlpServer : IAsyncDisposable
 
             using var document = await JsonDocument.ParseAsync(context.Request.Body);
             var received = context.RequestServices.GetRequiredService<ReceivedTraces>();
+            foreach (var header in context.Request.Headers)
+                received.RecordHeader(header.Key, header.Value!);
             var spans = CountSpans(document.RootElement, received);
             received.Record(spans);
 
@@ -165,6 +167,11 @@ public sealed class TestOtlpServer : IAsyncDisposable
         {
             if (Interlocked.Decrement(ref options.FailuresRemaining) >= 0)
                 throw new RpcException(new Status(StatusCode.Unavailable, "transient failure"));
+
+            // gRPC metadata is just HTTP/2 headers; skip binary (-bin) entries.
+            foreach (var entry in context.RequestHeaders)
+                if (!entry.IsBinary)
+                    received.RecordHeader(entry.Key, entry.Value);
 
             var spans = 0;
             foreach (var resourceSpans in request.ResourceSpans)

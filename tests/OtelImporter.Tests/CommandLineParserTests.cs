@@ -122,6 +122,59 @@ public class CommandLineParserTests
         Assert.False(result.Options.NoLogFileName);
     }
 
+    [Theory]
+    [InlineData("--http-header")]
+    [InlineData("-H")]
+    public void ParsesRepeatedHttpHeaders(string flag)
+    {
+        var result = CommandLineParser.Parse(
+            ["traces.jsonl", flag, "X-Honeycomb-Team=hcik_123", flag, "X-Other=v"]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(
+            [new("X-Honeycomb-Team", "hcik_123"), new("X-Other", "v")],
+            result.Options!.HttpHeaders);
+    }
+
+    [Fact]
+    public void HttpHeaderValueMayContainEqualsAndBeEmpty()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "-H", "X-A=a=b", "-H", "X-Empty="]);
+
+        Assert.Null(result.Error);
+        Assert.Equal([new("X-A", "a=b"), new("X-Empty", "")], result.Options!.HttpHeaders);
+    }
+
+    [Theory]
+    [InlineData("noequals")]
+    [InlineData("=novalue")]
+    public void RejectsInvalidHttpHeader(string value)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "-H", value]);
+
+        Assert.NotNull(result.Error);
+        Assert.Null(result.Options);
+    }
+
+    [Fact]
+    public void HttpHeadersDefaultToEmpty()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl"]);
+
+        Assert.Null(result.Error);
+        Assert.Empty(result.Options!.HttpHeaders);
+    }
+
+    [Fact]
+    public void DashLowercaseHStillMeansHelp()
+    {
+        // -H is http-header; -h must remain help.
+        var result = CommandLineParser.Parse(["-h"]);
+
+        Assert.Null(result.Error);
+        Assert.True(result.Options!.ShowHelp);
+    }
+
     [Fact]
     public void ParsesNoLogFileNameFlag()
     {
@@ -129,6 +182,49 @@ public class CommandLineParserTests
 
         Assert.Null(result.Error);
         Assert.True(result.Options!.NoLogFileName);
+    }
+
+    [Fact]
+    public void ParsesFromAndToAsUtc()
+    {
+        var result = CommandLineParser.Parse(
+            ["traces.jsonl", "--from", "2026-05-26T01:56:00Z", "--to", "2026-05-26T01:57:00"]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(new DateTimeOffset(2026, 5, 26, 1, 56, 0, TimeSpan.Zero), result.Options!.From);
+        // No offset -> treated as UTC.
+        Assert.Equal(new DateTimeOffset(2026, 5, 26, 1, 57, 0, TimeSpan.Zero), result.Options.To);
+    }
+
+    [Fact]
+    public void FromAndToDefaultToNull()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl"]);
+
+        Assert.Null(result.Error);
+        Assert.Null(result.Options!.From);
+        Assert.Null(result.Options.To);
+    }
+
+    [Theory]
+    [InlineData("--from")]
+    [InlineData("--to")]
+    public void RejectsInvalidTimestamp(string flag)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", flag, "not-a-date"]);
+
+        Assert.NotNull(result.Error);
+        Assert.Null(result.Options);
+    }
+
+    [Fact]
+    public void RejectsFromLaterThanTo()
+    {
+        var result = CommandLineParser.Parse(
+            ["traces.jsonl", "--from", "2026-05-26T02:00:00Z", "--to", "2026-05-26T01:00:00Z"]);
+
+        Assert.NotNull(result.Error);
+        Assert.Null(result.Options);
     }
 
     [Fact]

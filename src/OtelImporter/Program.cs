@@ -41,9 +41,11 @@ internal static class Importer
             return ExitCode.UsageError;
         }
 
+        var filter = SpanTimeFilter.Create(options.From, options.To);
+
         // --inspect is a read-only pass: no export, so endpoint/protocol/rate/retry are all ignored.
         if (options.Inspect)
-            return await RunInspectAsync(options.InputFile);
+            return await RunInspectAsync(options.InputFile!, options, filter);
 
         var configuration = ExporterConfigurationResolver.Resolve(options, Environment.GetEnvironmentVariable);
         if (configuration.Error is not null)
@@ -60,6 +62,7 @@ internal static class Importer
         if (options.MaxBatchesPerSecond is { } rate)
             Console.WriteLine($"  rate limit: {rate:G} batches/sec");
         Console.WriteLine($"  retries: up to {retryOptions.MaxAttempts - 1} per batch on transient failures");
+        PrintTimeWindow(Console.Out, options);
 
         using var cancellation = new ConsoleCancellation();
 
@@ -70,8 +73,12 @@ internal static class Importer
             Console.Error.WriteLine($"warning: {message}");
         }
 
+        // Header values are often secrets (e.g. an API key), so log only the names.
+        if (options.HttpHeaders.Count > 0)
+            Console.WriteLine($"  http headers: {string.Join(", ", options.HttpHeaders.Select(h => h.Key))}");
+
         var factory = new ExporterFactory();
-        var baseExporter = factory.Create(resolved);
+        var baseExporter = factory.Create(resolved, options.HttpHeaders);
         await using ITraceExporter exporter = retryOptions.MaxAttempts > 1
             ? new RetryingTraceExporter(baseExporter, retryOptions, TimeProvider.System, ReportDiagnostic)
             : baseExporter;
@@ -90,7 +97,7 @@ internal static class Importer
                 Console.WriteLine($"    {description}");
         }
 
-        var runner = new ImportRunner(new InputStreamFactory(), exporter, rateLimiter, enricher);
+        var runner = new ImportRunner(new InputStreamFactory(), exporter, rateLimiter, enricher, filter);
 
         // By default we also summarise what was exported; --no-inspect skips it.
         var inspector = options.NoInspect ? null : new TraceInspector();
@@ -142,9 +149,10 @@ internal static class Importer
         }
     }
 
-    static async Task<int> RunInspectAsync(string inputFile)
+    static async Task<int> RunInspectAsync(string inputFile, CommandLineOptions options, SpanTimeFilter? filter)
     {
         Console.WriteLine($"Inspecting '{inputFile}' (read-only, nothing will be exported)");
+        PrintTimeWindow(Console.Out, options);
 
         using var cancellation = new ConsoleCancellation();
 
@@ -157,7 +165,7 @@ internal static class Importer
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            var runner = new InspectRunner(new InputStreamFactory());
+            var runner = new InspectRunner(new InputStreamFactory(), filter);
             var summary = await runner.RunAsync(inputFile, progress, cancellation.Token);
             stopwatch.Stop();
 
@@ -210,6 +218,14 @@ internal static class Importer
             Console.WriteLine($"    {entry.Count.ToString("N0").PadLeft(countWidth)}  {entry.Name}");
     }
 
+    static void PrintTimeWindow(TextWriter writer, CommandLineOptions options)
+    {
+        if (options.From is { } from)
+            writer.WriteLine($"  from: {FormatTimestamp(from)} (earlier spans ignored)");
+        if (options.To is { } to)
+            writer.WriteLine($"  to:   {FormatTimestamp(to)} (later spans ignored)");
+    }
+
     static string FormatTimestamp(DateTimeOffset value) =>
         value.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
 
@@ -244,6 +260,9 @@ internal static class Importer
         writer.WriteLine("      --no-inspect        Export without printing the end-of-run summary.");
         writer.WriteLine("  -a, --attribute k=v     Add an attribute to every exported span (repeatable).");
         writer.WriteLine("      --no-log-file-name  Do not add the automatic log.file.name attribute.");
+        writer.WriteLine("  -H, --http-header k=v   Add an HTTP header to every export request (repeatable).");
+        writer.WriteLine("      --from <datetime>   Ignore spans that start before this time (UTC if no offset).");
+        writer.WriteLine("      --to <datetime>     Ignore spans that start after this time (UTC if no offset).");
         writer.WriteLine("  -h, --help              Show this help.");
         writer.WriteLine();
         writer.WriteLine("Endpoint resolution (highest precedence first):");

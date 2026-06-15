@@ -11,6 +11,9 @@ internal sealed record CommandLineOptions
     public bool NoInspect { get; init; }
     public bool NoLogFileName { get; init; }
     public IReadOnlyList<KeyValuePair<string, string>> Attributes { get; init; } = [];
+    public IReadOnlyList<KeyValuePair<string, string>> HttpHeaders { get; init; } = [];
+    public DateTimeOffset? From { get; init; }
+    public DateTimeOffset? To { get; init; }
     public bool ShowHelp { get; init; }
 }
 
@@ -31,6 +34,9 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 //   --no-inspect            export without printing the end-of-run summary
 //   --attribute, -a k=v     add an attribute to every exported span (repeatable)
 //   --no-log-file-name      do not add the automatic log.file.name attribute
+//   --http-header, -H k=v   add an HTTP header to every export request (repeatable)
+//   --from <datetime>       ignore spans that start before this time
+//   --to <datetime>         ignore spans that start after this time
 //   --help, -h              show usage
 internal static class CommandLineParser
 {
@@ -45,6 +51,9 @@ internal static class CommandLineParser
         var noInspect = false;
         var noLogFileName = false;
         var attributes = new List<KeyValuePair<string, string>>();
+        var httpHeaders = new List<KeyValuePair<string, string>>();
+        DateTimeOffset? from = null;
+        DateTimeOffset? to = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -101,6 +110,22 @@ internal static class CommandLineParser
                     noLogFileName = true;
                     break;
 
+                case "--from":
+                    if (!TryTakeValue(args, ref i, out var fromValue))
+                        return CommandLineParseResult.Failure($"Missing value for {arg}.");
+                    if (!TryParseTimestamp(fromValue, out var parsedFrom))
+                        return CommandLineParseResult.Failure($"Invalid value '{fromValue}' for {arg}. Expected a date/time (e.g. 2026-05-26T01:56:00Z).");
+                    from = parsedFrom;
+                    break;
+
+                case "--to":
+                    if (!TryTakeValue(args, ref i, out var toValue))
+                        return CommandLineParseResult.Failure($"Missing value for {arg}.");
+                    if (!TryParseTimestamp(toValue, out var parsedTo))
+                        return CommandLineParseResult.Failure($"Invalid value '{toValue}' for {arg}. Expected a date/time (e.g. 2026-05-26T01:56:00Z).");
+                    to = parsedTo;
+                    break;
+
                 case "--attribute":
                 case "-a":
                     if (!TryTakeValue(args, ref i, out var attributeValue))
@@ -111,6 +136,18 @@ internal static class CommandLineParser
                             $"Invalid attribute '{attributeValue}' for {arg}. Expected name=value.");
                     attributes.Add(new KeyValuePair<string, string>(
                         attributeValue[..separator], attributeValue[(separator + 1)..]));
+                    break;
+
+                case "--http-header":
+                case "-H":
+                    if (!TryTakeValue(args, ref i, out var headerValue))
+                        return CommandLineParseResult.Failure($"Missing value for {arg}.");
+                    var headerSeparator = headerValue.IndexOf('=');
+                    if (headerSeparator <= 0)
+                        return CommandLineParseResult.Failure(
+                            $"Invalid header '{headerValue}' for {arg}. Expected name=value.");
+                    httpHeaders.Add(new KeyValuePair<string, string>(
+                        headerValue[..headerSeparator], headerValue[(headerSeparator + 1)..]));
                     break;
 
                 default:
@@ -126,6 +163,9 @@ internal static class CommandLineParser
         if (inspect && noInspect)
             return CommandLineParseResult.Failure("Cannot combine --inspect (read-only) with --no-inspect.");
 
+        if (from is { } f && to is { } t && f > t)
+            return CommandLineParseResult.Failure("--from must not be later than --to.");
+
         return CommandLineParseResult.Success(new CommandLineOptions
         {
             InputFile = inputFile,
@@ -137,6 +177,9 @@ internal static class CommandLineParser
             NoInspect = noInspect,
             NoLogFileName = noLogFileName,
             Attributes = attributes,
+            HttpHeaders = httpHeaders,
+            From = from,
+            To = to,
         });
     }
 
@@ -151,6 +194,16 @@ internal static class CommandLineParser
         value = args[++index];
         return true;
     }
+
+    // Parses a date/time for --from/--to. A value without an explicit offset is treated
+    // as UTC (span timestamps are unix-nanos, i.e. UTC); a value with an offset is
+    // honoured and converted to UTC.
+    public static bool TryParseTimestamp(string value, out DateTimeOffset result) =>
+        DateTimeOffset.TryParse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out result);
 
     public static bool TryParseProtocol(string value, out OtlpProtocol protocol)
     {

@@ -25,6 +25,9 @@ OtelImporter <input-file> --inspect
 | `--no-inspect`           | Export without printing the end-of-run summary.                    |
 | `-a`, `--attribute k=v`  | Add an attribute to every exported span. Repeatable.              |
 | `--no-log-file-name`     | Don't add the automatic `log.file.name` attribute.                |
+| `-H`, `--http-header k=v`| Add an HTTP header to every export request. Repeatable.           |
+| `--from <datetime>`      | Ignore spans that start before this time (UTC if no offset).       |
+| `--to <datetime>`        | Ignore spans that start after this time (UTC if no offset).        |
 | `-h`, `--help`           | Show help.                                                         |
 
 Each line of the input file is one batch (one `ExportTraceServiceRequest`).
@@ -57,6 +60,39 @@ OtelImporter traces.jsonl --endpoint http://collector:8080 --protocol http
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 OtelImporter traces.jsonl.zst
 ```
+
+## Custom HTTP headers
+
+`--http-header`/`-H` (repeatable, `name=value`) adds a header to every export request.
+This is how OTLP carries authentication — e.g. Honeycomb's team key:
+
+```bash
+OtelImporter traces.jsonl.zst -e https://api.honeycomb.io \
+  --http-header X-Honeycomb-Team=hcik_your_api_key
+```
+
+Headers apply to both protocols: over gRPC they travel as HTTP/2 headers (gRPC
+metadata), which is exactly how OTLP/gRPC carries auth. The startup banner lists header
+*names* only — values are treated as secrets and never printed.
+
+## Filtering by time
+
+`--from` and `--to` restrict processing to spans whose **start time** falls within an
+inclusive window. Spans outside the window are dropped before anything else happens, so
+they are neither exported nor counted by `--inspect`.
+
+```bash
+# Only spans started on/after 2026-05-26 01:56:00 UTC
+OtelImporter traces.jsonl.zst -e <url> --from 2026-05-26T01:56:00Z
+
+# A bounded window (either bound may be given on its own)
+OtelImporter traces.jsonl.zst --inspect \
+  --from 2026-05-26T01:56:00Z --to 2026-05-26T01:57:00Z
+```
+
+A value without a timezone offset is interpreted as UTC (span timestamps are UTC); a
+value with an offset is honoured. A batch with no spans left after filtering is skipped
+entirely — no empty request is sent upstream. Spans with no start time are kept.
 
 ## Adding attributes to spans
 

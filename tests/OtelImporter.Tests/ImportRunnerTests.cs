@@ -54,6 +54,26 @@ public class ImportRunnerTests
     }
 
     [Fact]
+    public async Task FiltersOutOfWindowSpansAndSkipsEmptyBatches()
+    {
+        // One span per batch at t = 10s, 20s, 30s (unix-nanos).
+        static string SpanAt(ulong seconds) =>
+            $$"""{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"s","startTimeUnixNano":"{{seconds * 1_000_000_000UL}}"}]}]}]}""";
+
+        var input = new StubInputStreamFactory(Lines(SpanAt(10), SpanAt(20), SpanAt(30)));
+        var exporter = new RecordingExporter();
+        var inspector = new TraceInspector();
+        var filter = SpanTimeFilter.Create(DateTimeOffset.UnixEpoch.AddSeconds(15), DateTimeOffset.UnixEpoch.AddSeconds(25));
+
+        var result = await new ImportRunner(input, exporter, filter: filter).RunAsync("ignored", inspector: inspector);
+
+        // Only the 20s batch is within [15s, 25s]; the others are dropped entirely.
+        Assert.Equal(1, result.BatchCount);
+        Assert.Single(exporter.SpanNames);
+        Assert.Equal(1, inspector.BuildSummary(result.BatchCount).SpanCount);
+    }
+
+    [Fact]
     public async Task AggregatesRejectedSpansAndEmitsADiagnosticPerProblemBatch()
     {
         var input = new StubInputStreamFactory(Lines(Batch("one"), Batch("two"), Batch("three")));

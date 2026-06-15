@@ -18,17 +18,20 @@ internal sealed class ImportRunner
     readonly ITraceExporter _exporter;
     readonly IRateLimiter? _rateLimiter;
     readonly SpanEnricher? _enricher;
+    readonly SpanTimeFilter? _filter;
 
     public ImportRunner(
         IInputStreamFactory inputStreamFactory,
         ITraceExporter exporter,
         IRateLimiter? rateLimiter = null,
-        SpanEnricher? enricher = null)
+        SpanEnricher? enricher = null,
+        SpanTimeFilter? filter = null)
     {
         _inputStreamFactory = inputStreamFactory;
         _exporter = exporter;
         _rateLimiter = rateLimiter;
         _enricher = enricher;
+        _filter = filter;
     }
 
     public async Task<ImportResult> RunAsync(
@@ -47,7 +50,16 @@ internal sealed class ImportRunner
             var request = JsonSerializer.Deserialize(line.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
                           ?? throw new TraceExportException("Trace line deserialized to null.");
 
-            // The inspector summarises the file as-is; enrichment is an export-time concern.
+            // Drop out-of-window spans first; if the whole batch is gone there's nothing
+            // to summarise or send, so skip it (no empty request, no rate-limit cost).
+            if (_filter is not null)
+            {
+                _filter.Apply(request);
+                if (!SpanTimeFilter.HasSpans(request))
+                    continue;
+            }
+
+            // The inspector reflects what survived the filter; enrichment is export-only.
             inspector?.Add(request);
             _enricher?.Enrich(request);
 

@@ -111,6 +111,29 @@ public class OtlpExportEndToEndTests
         Assert.Equal(ExpectedSpans, server.Received.CountAttribute("octopus.otherprop", "def"));
     }
 
+    [Theory]
+    [InlineData("http")]
+    [InlineData("grpc")]
+    public async Task SendsCustomHttpHeadersOnEveryRequest(string protocol)
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+        var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
+
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--endpoint", endpoint.ToString(),
+            "--protocol", protocol,
+            "--http-header", "X-Honeycomb-Team=hcik_test",
+            "-H", "X-Custom=abc",
+        ]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
+        // gRPC lowercases metadata keys; ReceivedTraces looks up case-insensitively.
+        Assert.Equal("hcik_test", server.Received.Header("X-Honeycomb-Team"));
+        Assert.Equal("abc", server.Received.Header("X-Custom"));
+    }
+
     [Fact]
     public async Task NoLogFileNameSuppressesTheAutomaticAttribute()
     {
@@ -126,6 +149,61 @@ public class OtlpExportEndToEndTests
 
         Assert.Equal(ExitCode.Success, exitCode);
         Assert.Equal(0, server.Received.CountAttribute("log.file.name", "sample-traces.jsonl"));
+    }
+
+    [Theory]
+    [InlineData("http")]
+    [InlineData("grpc")]
+    public async Task ExportsOnlySpansWithinTheTimeWindow(string protocol)
+    {
+        // The sample spans run 2026-05-26 01:55:21 .. 01:57:03; cut off everything before 01:56:00.
+        await using var server = await TestOtlpServer.StartAsync();
+        var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
+
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--endpoint", endpoint.ToString(),
+            "--protocol", protocol,
+            "--from", "2026-05-26T01:56:00Z",
+        ]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
+        // Some spans are before the cutoff and some after, so a strict subset is exported.
+        Assert.InRange(server.Received.SpanCount, 1, ExpectedSpans - 1);
+    }
+
+    [Fact]
+    public async Task ExportsNothingWhenTheWindowExcludesEverything()
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--endpoint", server.HttpEndpoint.ToString(),
+            "--protocol", "http",
+            "--from", "2030-01-01T00:00:00Z",
+        ]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
+        // Every batch is empty after filtering, so nothing is sent at all.
+        Assert.Equal(0, server.Received.RequestCount);
+        Assert.Equal(0, server.Received.SpanCount);
+    }
+
+    [Fact]
+    public async Task InspectRespectsTheTimeWindowWithoutAnEndpoint()
+    {
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--inspect",
+            "--from", "2026-05-26T01:56:00Z",
+            "--to", "2026-05-26T01:57:00Z",
+        ]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
     }
 
     [Fact]
