@@ -80,7 +80,17 @@ internal static class Importer
             ? new BatchRateLimiter(batchesPerSecond, TimeProvider.System)
             : null;
 
-        var runner = new ImportRunner(new InputStreamFactory(), exporter, rateLimiter);
+        var enricher = SpanEnricher.Create(
+            options.NoLogFileName ? null : Path.GetFileName(options.InputFile),
+            options.Attributes);
+        if (enricher.HasAttributes)
+        {
+            Console.WriteLine("  adding span attributes:");
+            foreach (var description in enricher.Describe())
+                Console.WriteLine($"    {description}");
+        }
+
+        var runner = new ImportRunner(new InputStreamFactory(), exporter, rateLimiter, enricher);
 
         // By default we also summarise what was exported; --no-inspect skips it.
         var inspector = options.NoInspect ? null : new TraceInspector();
@@ -232,6 +242,8 @@ internal static class Importer
         writer.WriteLine("  -i, --inspect           Read-only: summarise the file instead of exporting.");
         writer.WriteLine("                          Export options (endpoint, rate, retries) are ignored.");
         writer.WriteLine("      --no-inspect        Export without printing the end-of-run summary.");
+        writer.WriteLine("  -a, --attribute k=v     Add an attribute to every exported span (repeatable).");
+        writer.WriteLine("      --no-log-file-name  Do not add the automatic log.file.name attribute.");
         writer.WriteLine("  -h, --help              Show this help.");
         writer.WriteLine();
         writer.WriteLine("Endpoint resolution (highest precedence first):");

@@ -87,6 +87,47 @@ public class OtlpExportEndToEndTests
         Assert.Equal(ExitCode.RuntimeError, exitCode);
     }
 
+    [Theory]
+    [InlineData("http")]
+    [InlineData("grpc")]
+    public async Task AddsLogFileNameAndCustomAttributesToEverySpan(string protocol)
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+        var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
+
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--endpoint", endpoint.ToString(),
+            "--protocol", protocol,
+            "--attribute", "octopus.prop=abc",
+            "-a", "octopus.otherprop=def",
+        ]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
+        // Every span carries the automatic file name plus both custom attributes.
+        Assert.Equal(ExpectedSpans, server.Received.CountAttribute("log.file.name", "sample-traces.jsonl"));
+        Assert.Equal(ExpectedSpans, server.Received.CountAttribute("octopus.prop", "abc"));
+        Assert.Equal(ExpectedSpans, server.Received.CountAttribute("octopus.otherprop", "def"));
+    }
+
+    [Fact]
+    public async Task NoLogFileNameSuppressesTheAutomaticAttribute()
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+
+        var exitCode = await Importer.RunAsync(
+        [
+            TestDataPath("sample-traces.jsonl"),
+            "--endpoint", server.HttpEndpoint.ToString(),
+            "--protocol", "http",
+            "--no-log-file-name",
+        ]);
+
+        Assert.Equal(ExitCode.Success, exitCode);
+        Assert.Equal(0, server.Received.CountAttribute("log.file.name", "sample-traces.jsonl"));
+    }
+
     [Fact]
     public async Task InspectSummarisesWithoutAnyEndpointConfigured()
     {

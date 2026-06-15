@@ -23,6 +23,8 @@ OtelImporter <input-file> --inspect
 | `--max-retries <n>`      | Retries per batch on transient failures (default: 4, `0` disables).|
 | `-i`, `--inspect`        | Read-only: summarise the file instead of exporting (see below).    |
 | `--no-inspect`           | Export without printing the end-of-run summary.                    |
+| `-a`, `--attribute k=v`  | Add an attribute to every exported span. Repeatable.              |
+| `--no-log-file-name`     | Don't add the automatic `log.file.name` attribute.                |
 | `-h`, `--help`           | Show help.                                                         |
 
 Each line of the input file is one batch (one `ExportTraceServiceRequest`).
@@ -55,6 +57,23 @@ OtelImporter traces.jsonl --endpoint http://collector:8080 --protocol http
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 OtelImporter traces.jsonl.zst
 ```
+
+## Adding attributes to spans
+
+Every exported span automatically gets a `log.file.name` attribute set to the input
+file name (e.g. `traces-1234.jsonl.zst`). Pass `--no-log-file-name` to turn that off.
+
+Use `--attribute`/`-a` (repeatable) to add your own string attributes to every span:
+
+```bash
+OtelImporter traces-1234.jsonl.zst -e http://collector:4318 \
+  --attribute octopus.prop=abc --attribute octopus.otherprop=def
+```
+
+The value is everything after the first `=`, so values may themselves contain `=` and
+may be empty (`-a key=`). Attributes are appended to each span's existing attributes
+(they don't replace same-named ones). Enrichment only applies when exporting — it's
+ignored under `--inspect`.
 
 ## Inspecting a file
 

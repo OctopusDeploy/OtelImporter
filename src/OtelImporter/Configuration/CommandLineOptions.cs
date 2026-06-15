@@ -9,6 +9,8 @@ internal sealed record CommandLineOptions
     public int? MaxRetries { get; init; }
     public bool Inspect { get; init; }
     public bool NoInspect { get; init; }
+    public bool NoLogFileName { get; init; }
+    public IReadOnlyList<KeyValuePair<string, string>> Attributes { get; init; } = [];
     public bool ShowHelp { get; init; }
 }
 
@@ -27,6 +29,8 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 //   --max-retries <count>   retries per batch on transient failures (0 disables)
 //   --inspect, -i           read-only: summarise the file instead of exporting
 //   --no-inspect            export without printing the end-of-run summary
+//   --attribute, -a k=v     add an attribute to every exported span (repeatable)
+//   --no-log-file-name      do not add the automatic log.file.name attribute
 //   --help, -h              show usage
 internal static class CommandLineParser
 {
@@ -39,6 +43,8 @@ internal static class CommandLineParser
         int? maxRetries = null;
         var inspect = false;
         var noInspect = false;
+        var noLogFileName = false;
+        var attributes = new List<KeyValuePair<string, string>>();
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -91,6 +97,22 @@ internal static class CommandLineParser
                     noInspect = true;
                     break;
 
+                case "--no-log-file-name":
+                    noLogFileName = true;
+                    break;
+
+                case "--attribute":
+                case "-a":
+                    if (!TryTakeValue(args, ref i, out var attributeValue))
+                        return CommandLineParseResult.Failure($"Missing value for {arg}.");
+                    var separator = attributeValue.IndexOf('=');
+                    if (separator <= 0)
+                        return CommandLineParseResult.Failure(
+                            $"Invalid attribute '{attributeValue}' for {arg}. Expected name=value.");
+                    attributes.Add(new KeyValuePair<string, string>(
+                        attributeValue[..separator], attributeValue[(separator + 1)..]));
+                    break;
+
                 default:
                     if (arg.StartsWith('-'))
                         return CommandLineParseResult.Failure($"Unknown option '{arg}'.");
@@ -113,6 +135,8 @@ internal static class CommandLineParser
             MaxRetries = maxRetries,
             Inspect = inspect,
             NoInspect = noInspect,
+            NoLogFileName = noLogFileName,
+            Attributes = attributes,
         });
     }
 

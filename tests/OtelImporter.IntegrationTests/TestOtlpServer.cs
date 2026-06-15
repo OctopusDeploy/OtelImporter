@@ -72,8 +72,9 @@ public sealed class TestOtlpServer : IAsyncDisposable
             }
 
             using var document = await JsonDocument.ParseAsync(context.Request.Body);
-            var spans = CountSpans(document.RootElement);
-            context.RequestServices.GetRequiredService<ReceivedTraces>().Record(spans);
+            var received = context.RequestServices.GetRequiredService<ReceivedTraces>();
+            var spans = CountSpans(document.RootElement, received);
+            received.Record(spans);
 
             context.Response.StatusCode = 200;
             context.Response.ContentType = "application/json";
@@ -95,7 +96,7 @@ public sealed class TestOtlpServer : IAsyncDisposable
         return server;
     }
 
-    static int CountSpans(JsonElement root)
+    static int CountSpans(JsonElement root, ReceivedTraces received)
     {
         var total = 0;
         if (!root.TryGetProperty("resourceSpans", out var resourceSpans))
@@ -108,12 +109,32 @@ public sealed class TestOtlpServer : IAsyncDisposable
 
             foreach (var scopeSpan in scopeSpans.EnumerateArray())
             {
-                if (scopeSpan.TryGetProperty("spans", out var spans))
-                    total += spans.GetArrayLength();
+                if (!scopeSpan.TryGetProperty("spans", out var spans))
+                    continue;
+
+                total += spans.GetArrayLength();
+                foreach (var span in spans.EnumerateArray())
+                    RecordAttributes(span, received);
             }
         }
 
         return total;
+    }
+
+    static void RecordAttributes(JsonElement span, ReceivedTraces received)
+    {
+        if (!span.TryGetProperty("attributes", out var attributes))
+            return;
+
+        foreach (var attribute in attributes.EnumerateArray())
+        {
+            if (attribute.TryGetProperty("key", out var key) &&
+                attribute.TryGetProperty("value", out var value) &&
+                value.TryGetProperty("stringValue", out var stringValue))
+            {
+                received.RecordAttribute(key.GetString()!, stringValue.GetString()!);
+            }
+        }
     }
 
     static int GetFreePort()
@@ -148,7 +169,15 @@ public sealed class TestOtlpServer : IAsyncDisposable
             var spans = 0;
             foreach (var resourceSpans in request.ResourceSpans)
             foreach (var scopeSpans in resourceSpans.ScopeSpans)
+            {
                 spans += scopeSpans.Spans.Count;
+                foreach (var span in scopeSpans.Spans)
+                foreach (var attribute in span.Attributes)
+                {
+                    if (attribute.Value.ValueCase == OpenTelemetry.Proto.Common.V1.AnyValue.ValueOneofCase.StringValue)
+                        received.RecordAttribute(attribute.Key, attribute.Value.StringValue);
+                }
+            }
 
             received.Record(spans);
 

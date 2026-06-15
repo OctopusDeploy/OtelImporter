@@ -17,12 +17,18 @@ internal sealed class ImportRunner
     readonly IInputStreamFactory _inputStreamFactory;
     readonly ITraceExporter _exporter;
     readonly IRateLimiter? _rateLimiter;
+    readonly SpanEnricher? _enricher;
 
-    public ImportRunner(IInputStreamFactory inputStreamFactory, ITraceExporter exporter, IRateLimiter? rateLimiter = null)
+    public ImportRunner(
+        IInputStreamFactory inputStreamFactory,
+        ITraceExporter exporter,
+        IRateLimiter? rateLimiter = null,
+        SpanEnricher? enricher = null)
     {
         _inputStreamFactory = inputStreamFactory;
         _exporter = exporter;
         _rateLimiter = rateLimiter;
+        _enricher = enricher;
     }
 
     public async Task<ImportResult> RunAsync(
@@ -41,9 +47,9 @@ internal sealed class ImportRunner
             var request = JsonSerializer.Deserialize(line.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
                           ?? throw new TraceExportException("Trace line deserialized to null.");
 
-            // (trace manipulation will hook in here, operating on `request`)
-
+            // The inspector summarises the file as-is; enrichment is an export-time concern.
             inspector?.Add(request);
+            _enricher?.Enrich(request);
 
             if (_rateLimiter is not null)
                 await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);

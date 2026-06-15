@@ -79,6 +79,58 @@ public class CommandLineParserTests
         Assert.Null(result.Options);
     }
 
+    [Theory]
+    [InlineData("--attribute")]
+    [InlineData("-a")]
+    public void ParsesRepeatedAttributes(string flag)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", flag, "octopus.prop=abc", flag, "octopus.otherprop=def"]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(
+            [new("octopus.prop", "abc"), new("octopus.otherprop", "def")],
+            result.Options!.Attributes);
+    }
+
+    [Fact]
+    public void AttributeValueMayContainEqualsAndBeEmpty()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "-a", "url=a=b", "-a", "empty="]);
+
+        Assert.Null(result.Error);
+        Assert.Equal([new("url", "a=b"), new("empty", "")], result.Options!.Attributes);
+    }
+
+    [Theory]
+    [InlineData("noequals")]
+    [InlineData("=novalue")]
+    public void RejectsInvalidAttribute(string value)
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "-a", value]);
+
+        Assert.NotNull(result.Error);
+        Assert.Null(result.Options);
+    }
+
+    [Fact]
+    public void AttributesDefaultToEmpty()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl"]);
+
+        Assert.Null(result.Error);
+        Assert.Empty(result.Options!.Attributes);
+        Assert.False(result.Options.NoLogFileName);
+    }
+
+    [Fact]
+    public void ParsesNoLogFileNameFlag()
+    {
+        var result = CommandLineParser.Parse(["traces.jsonl", "--no-log-file-name"]);
+
+        Assert.Null(result.Error);
+        Assert.True(result.Options!.NoLogFileName);
+    }
+
     [Fact]
     public void FlagsCanPrecedePositionalArgument()
     {

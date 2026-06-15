@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace OtelImporter.IntegrationTests;
 
 // Thread-safe sink shared by the gRPC service and the HTTP endpoint so a test can
@@ -6,6 +8,7 @@ public sealed class ReceivedTraces
 {
     int _spanCount;
     int _requestCount;
+    readonly ConcurrentBag<KeyValuePair<string, string>> _attributes = [];
 
     public int SpanCount => Volatile.Read(ref _spanCount);
     public int RequestCount => Volatile.Read(ref _requestCount);
@@ -15,4 +18,11 @@ public sealed class ReceivedTraces
         Interlocked.Increment(ref _requestCount);
         Interlocked.Add(ref _spanCount, spans);
     }
+
+    // Records one string-valued span attribute (across all spans of all requests).
+    public void RecordAttribute(string key, string value) => _attributes.Add(new(key, value));
+
+    // How many spans carried exactly this attribute key=value.
+    public int CountAttribute(string key, string value) =>
+        _attributes.Count(a => a.Key == key && a.Value == value);
 }
