@@ -32,17 +32,26 @@ OtelImporter <input-file> --inspect
 
 Each line of the input file is one batch (one `ExportTraceServiceRequest`).
 
+The endpoint, protocol and headers can each come from the command line or the standard
+OpenTelemetry environment variables. **The command line always takes precedence**, and
+signal-specific (`..._TRACES_...`) variables take precedence over the generic ones.
+
 ### Endpoint resolution (highest precedence first)
 
 1. `--endpoint` / `-e`
 2. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
 3. `OTEL_EXPORTER_OTLP_ENDPOINT`
 
-### Protocol resolution
+### Protocol resolution (highest precedence first)
 
-The protocol is sniffed from the endpoint port — **4317 ⇒ gRPC**, **4318 ⇒ HTTP** —
-unless `--protocol` is given. If the port is neither and `--protocol` is omitted,
-the app errors and asks you to specify one.
+1. `--protocol` / `-p`
+2. `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`
+3. `OTEL_EXPORTER_OTLP_PROTOCOL`
+4. Sniffed from the endpoint port — **4317 ⇒ gRPC**, **4318 ⇒ HTTP**.
+
+If none of these determine the protocol, the app errors and asks you to specify one.
+Accepted values are `grpc`, `http`, `http/protobuf`, and `http/json` (the last three all
+mean HTTP for this tool).
 
 For HTTP, the `/v1/traces` signal path is appended automatically if not already
 present. For gRPC, the standard `TraceService/Export` method path is used.
@@ -74,6 +83,20 @@ OtelImporter traces.jsonl.zst -e https://api.honeycomb.io \
 Headers apply to both protocols: over gRPC they travel as HTTP/2 headers (gRPC
 metadata), which is exactly how OTLP/gRPC carries auth. The startup banner lists header
 *names* only — values are treated as secrets and never printed.
+
+Headers can also come from the environment, in the standard comma-separated
+`key1=value1,key2=value2` format:
+
+```bash
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=hcik_your_api_key"
+# or traces-specific (takes precedence over the generic one):
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=hcik_your_api_key"
+```
+
+All sources are **merged** by header name (case-insensitive). On a conflict the
+higher-precedence source wins, highest last: `OTEL_EXPORTER_OTLP_HEADERS` →
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS` → `--http-header`. So you can keep the API key in
+the environment and still add or override individual headers on the command line.
 
 ## Filtering by time
 

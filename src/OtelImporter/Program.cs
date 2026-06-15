@@ -74,11 +74,11 @@ internal static class Importer
         }
 
         // Header values are often secrets (e.g. an API key), so log only the names.
-        if (options.HttpHeaders.Count > 0)
-            Console.WriteLine($"  http headers: {string.Join(", ", options.HttpHeaders.Select(h => h.Key))}");
+        if (resolved.Headers.Count > 0)
+            Console.WriteLine($"  http headers: {string.Join(", ", resolved.Headers.Select(h => h.Key))}");
 
         var factory = new ExporterFactory();
-        var baseExporter = factory.Create(resolved, options.HttpHeaders);
+        var baseExporter = factory.Create(resolved, resolved.Headers);
         await using ITraceExporter exporter = retryOptions.MaxAttempts > 1
             ? new RetryingTraceExporter(baseExporter, retryOptions, TimeProvider.System, ReportDiagnostic)
             : baseExporter;
@@ -265,12 +265,22 @@ internal static class Importer
         writer.WriteLine("      --to <datetime>     Ignore spans that start after this time (UTC if no offset).");
         writer.WriteLine("  -h, --help              Show this help.");
         writer.WriteLine();
+        writer.WriteLine("The command line always takes precedence over environment variables.");
+        writer.WriteLine();
         writer.WriteLine("Endpoint resolution (highest precedence first):");
         writer.WriteLine("  1. --endpoint / -e");
         writer.WriteLine($"  2. {ExporterConfigurationResolver.TracesEndpointVariable}");
         writer.WriteLine($"  3. {ExporterConfigurationResolver.GenericEndpointVariable}");
         writer.WriteLine();
-        writer.WriteLine("Protocol is sniffed from the port (4317 => grpc, 4318 => http) unless --protocol is given.");
+        writer.WriteLine("Protocol resolution (highest precedence first):");
+        writer.WriteLine("  1. --protocol / -p");
+        writer.WriteLine($"  2. {ExporterConfigurationResolver.TracesProtocolVariable}");
+        writer.WriteLine($"  3. {ExporterConfigurationResolver.GenericProtocolVariable}");
+        writer.WriteLine("  4. sniffed from the port (4317 => grpc, 4318 => http)");
+        writer.WriteLine();
+        writer.WriteLine("Headers are merged (command line wins on conflicts) from --http-header and:");
+        writer.WriteLine($"  {ExporterConfigurationResolver.TracesHeadersVariable}");
+        writer.WriteLine($"  {ExporterConfigurationResolver.GenericHeadersVariable}   (format: key1=value1,key2=value2)");
     }
 }
 

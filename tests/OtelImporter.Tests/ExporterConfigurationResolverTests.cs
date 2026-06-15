@@ -160,4 +160,136 @@ public class ExporterConfigurationResolverTests
 
         Assert.Equal(Uri.UriSchemeHttps, result.Configuration!.Endpoint.Scheme);
     }
+
+    [Fact]
+    public void EnvironmentVariableNamesMatchTheOtelSpec()
+    {
+        Assert.Equal("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", ExporterConfigurationResolver.TracesProtocolVariable);
+        Assert.Equal("OTEL_EXPORTER_OTLP_PROTOCOL", ExporterConfigurationResolver.GenericProtocolVariable);
+        Assert.Equal("OTEL_EXPORTER_OTLP_TRACES_HEADERS", ExporterConfigurationResolver.TracesHeadersVariable);
+        Assert.Equal("OTEL_EXPORTER_OTLP_HEADERS", ExporterConfigurationResolver.GenericHeadersVariable);
+    }
+
+    // ---- Protocol from environment ----
+
+    [Theory]
+    [InlineData("grpc", OtlpProtocol.Grpc)]
+    [InlineData("http/protobuf", OtlpProtocol.Http)]
+    [InlineData("http/json", OtlpProtocol.Http)]
+    public void ProtocolReadFromEnvironmentWhenNotOnCommandLine(string value, OtlpProtocol expected)
+    {
+        // Port 9999 can't be sniffed, so the env var is what resolves the protocol.
+        var options = new CommandLineOptions { Endpoint = "http://host:9999" };
+        var env = Env((ExporterConfigurationResolver.GenericProtocolVariable, value));
+
+        var result = ExporterConfigurationResolver.Resolve(options, env);
+
+        Assert.Null(result.Error);
+        Assert.Equal(expected, result.Configuration!.Protocol);
+    }
+
+    [Fact]
+    public void TracesProtocolVariableTakesPrecedenceOverGeneric()
+    {
+        var options = new CommandLineOptions { Endpoint = "http://host:9999" };
+        var env = Env(
+            (ExporterConfigurationResolver.TracesProtocolVariable, "grpc"),
+            (ExporterConfigurationResolver.GenericProtocolVariable, "http/protobuf"));
+
+        var result = ExporterConfigurationResolver.Resolve(options, env);
+
+        Assert.Equal(OtlpProtocol.Grpc, result.Configuration!.Protocol);
+    }
+
+    [Fact]
+    public void CommandLineProtocolTakesPrecedenceOverEnvironment()
+    {
+        var options = new CommandLineOptions { Endpoint = "http://host:9999", Protocol = OtlpProtocol.Http };
+        var env = Env((ExporterConfigurationResolver.TracesProtocolVariable, "grpc"));
+
+        var result = ExporterConfigurationResolver.Resolve(options, env);
+
+        Assert.Equal(OtlpProtocol.Http, result.Configuration!.Protocol);
+    }
+
+    [Fact]
+    public void EnvironmentProtocolOverridesPortSniffing()
+    {
+        // Port says http (4318), but the env protocol grpc should win over sniffing.
+        var options = new CommandLineOptions { Endpoint = "http://host:4318" };
+        var env = Env((ExporterConfigurationResolver.GenericProtocolVariable, "grpc"));
+
+        var result = ExporterConfigurationResolver.Resolve(options, env);
+
+        Assert.Equal(OtlpProtocol.Grpc, result.Configuration!.Protocol);
+    }
+
+    [Fact]
+    public void ErrorsWhenEnvironmentProtocolIsInvalid()
+    {
+        var options = new CommandLineOptions { Endpoint = "http://host:9999" };
+        var env = Env((ExporterConfigurationResolver.GenericProtocolVariable, "carrier-pigeon"));
+
+        var result = ExporterConfigurationResolver.Resolve(options, env);
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("carrier-pigeon", result.Error);
+    }
+
+    // ---- Headers from environment ----
+
+    static Dictionary<string, string> HeaderMap(ConfigurationResult result) =>
+        result.Configuration!.Headers.ToDictionary(h => h.Key, h => h.Value, StringComparer.OrdinalIgnoreCase);
+
+    [Fact]
+    public void NoHeadersResolvesToEmpty()
+    {
+        var result = ExporterConfigurationResolver.Resolve(new CommandLineOptions { Endpoint = "http://host:4318" }, NoEnv);
+
+        Assert.Empty(result.Configuration!.Headers);
+    }
+
+    [Fact]
+    public void ParsesCommaSeparatedHeaderListFromEnvironment()
+    {
+        var options = new CommandLineOptions { Endpoint = "http://host:4318" };
+        var env = Env((ExporterConfigurationResolver.GenericHeadersVariable, "x-honeycomb-team=hcik_123, x-other=value"));
+
+        var headers = HeaderMap(ExporterConfigurationResolver.Resolve(options, env));
+
+        Assert.Equal("hcik_123", headers["x-honeycomb-team"]);
+        Assert.Equal("value", headers["x-other"]);
+    }
+
+    [Fact]
+    public void HeadersMergeAcrossSourcesWithCommandLineWinning()
+    {
+        var options = new CommandLineOptions
+        {
+            Endpoint = "http://host:4318",
+            HttpHeaders = [new("X-Honeycomb-Team", "from-cli"), new("X-Cli-Only", "cli")],
+        };
+        var env = Env(
+            (ExporterConfigurationResolver.GenericHeadersVariable, "x-honeycomb-team=from-generic,x-generic-only=g"),
+            (ExporterConfigurationResolver.TracesHeadersVariable, "x-honeycomb-team=from-traces,x-traces-only=t"));
+
+        var headers = HeaderMap(ExporterConfigurationResolver.Resolve(options, env));
+
+        // Command line wins the shared key; traces beats generic; everything else merges in.
+        Assert.Equal("from-cli", headers["x-honeycomb-team"]);
+        Assert.Equal("g", headers["x-generic-only"]);
+        Assert.Equal("t", headers["x-traces-only"]);
+        Assert.Equal("cli", headers["x-cli-only"]);
+    }
+
+    [Fact]
+    public void SkipsMalformedHeaderEntries()
+    {
+        var options = new CommandLineOptions { Endpoint = "http://host:4318" };
+        var env = Env((ExporterConfigurationResolver.GenericHeadersVariable, "good=1,,noequals,=novalue,also=2"));
+
+        var headers = HeaderMap(ExporterConfigurationResolver.Resolve(options, env));
+
+        Assert.Equal(["also", "good"], headers.Keys.OrderBy(k => k));
+    }
 }
