@@ -4,15 +4,33 @@ A small, AOT-compiled .NET 10 console app that streams OpenTelemetry trace files
 (`*.jsonl` / `*.jsonl.zst`) to an upstream OTLP endpoint (e.g. an OpenTelemetry
 Collector) over **HTTP** or **gRPC**.
 
-The input files are produced by our tests and are already in OTLP/JSON form (each
-line is one `ExportTraceServiceRequest`).
+## Usage / Examples
 
-## Usage
+### Upload a trace file to your local Otel Collector or Jaeger/SigNoz instance
 
+```bash
+OtelImporter traces-1776.jsonl.zst --endpoint http://localhost:4318 --max-rate 10
 ```
-OtelImporter <input-file> [--endpoint <url>] [--protocol <grpc|http>]
-OtelImporter <input-file> --inspect
+
+_Note:_ When running through a local OpenTelemetry collector, it is likely to silently drop spans that exceed the rate-limit.
+If you are sending data directly to jaeger or signoz, you may not need `--max-rate` or a higher rate may be fine.
+
+### Upload a trace file to Honeycomb
+
+```bash
+OtelImporter octopus-server-traces-2026-06-15T02-05-55.jsonl.zst --endpoint https://api.honeycomb.io  -p grpc --http-header X-Honeycomb-Team=hcaik_YOUR_INGEST_KEY_HERE
 ```
+
+_Note:_ Uploading large blocks of data to Honeycomb can take a while. If you are investigating a particular issue, use the `--from` and `--to` parameters to filter the time range
+and reduce the amount of data uploaded.
+
+### Inspect a trace file
+
+```bash
+OtelImporter traces-1776.jsonl.zst --inspect
+```
+
+## Detailed Usage
 
 | Argument / Option        | Description                                                        |
 | ------------------------ | ----------------------------------------------------------------- |
@@ -55,20 +73,6 @@ mean HTTP for this tool).
 
 For HTTP, the `/v1/traces` signal path is appended automatically if not already
 present. For gRPC, the standard `TraceService/Export` method path is used.
-
-### Examples
-
-```bash
-# Auto-sniffed gRPC (port 4317)
-OtelImporter traces.jsonl.zst -e http://collector:4317
-
-# HTTP, explicit protocol
-OtelImporter traces.jsonl --endpoint http://collector:8080 --protocol http
-
-# Endpoint from the environment
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
-OtelImporter traces.jsonl.zst
-```
 
 ## Custom HTTP headers
 
@@ -193,7 +197,7 @@ profile is the same as a normal import regardless of file size.
 | 3    | Exported, but the collector rejected some spans.              |
 | 130  | Cancelled (Ctrl+C).                                           |
 
-## Design notes
+## Design notes (These help claude keep on track)
 
 - **Streaming everywhere.** Input is read line-by-line at the byte level; `.zst`
   files are decompressed through a streaming decompressor. An 800 MB-decompressed
