@@ -65,7 +65,6 @@ public class SpanEnricherTests
         var enricher = SpanEnricher.Create(logFileName: null, attributes: []);
         var span = new Span();
 
-        Assert.False(enricher.HasAttributes);
         enricher.Enrich(Batch(span));
 
         Assert.Null(span.Attributes);
@@ -83,13 +82,5 @@ public class SpanEnricherTests
         {
             ResourceSpans = [new ResourceSpans { ScopeSpans = [new ScopeSpans()] }],
         });
-    }
-
-    [Fact]
-    public void DescribesAddedAttributes()
-    {
-        var enricher = SpanEnricher.Create(logFileName: "f.jsonl", attributes: [new("k", "v")]);
-
-        Assert.Equal(["log.file.name=f.jsonl", "k=v"], enricher.Describe());
     }
 }

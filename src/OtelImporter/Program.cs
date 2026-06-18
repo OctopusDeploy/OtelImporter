@@ -9,6 +9,10 @@ return await Importer.RunAsync(args);
 
 internal static class Importer
 {
+    // Stop a multi-file run once this many files fail back-to-back: a streak of failures
+    // points at the upstream being down rather than a few individually bad files.
+    const int MaxConsecutiveFailures = 3;
+
     public static async Task<int> RunAsync(string[] args)
     {
         var parse = CommandLineParser.Parse(args);
@@ -35,18 +39,26 @@ internal static class Importer
             return ExitCode.UsageError;
         }
 
-        if (!File.Exists(options.InputFile))
+        // The positional argument may be a single file or a directory of trace files.
+        var resolution = InputResolver.Resolve(options.InputFile!);
+        if (resolution.Error is not null)
         {
-            Console.Error.WriteLine($"error: input file not found: {options.InputFile}");
+            Console.Error.WriteLine($"error: {resolution.Error}");
             return ExitCode.UsageError;
         }
 
+        var inputFiles = resolution.Files;
         var filter = SpanTimeFilter.Create(options.From, options.To);
 
         // --inspect is a read-only pass: no export, so endpoint/protocol/rate/retry are all ignored.
         if (options.Inspect)
-            return await RunInspectAsync(options.InputFile!, options, filter);
+            return await RunInspectAsync(inputFiles, options, filter);
 
+        return await RunExportAsync(inputFiles, options, filter);
+    }
+
+    static async Task<int> RunExportAsync(IReadOnlyList<string> inputFiles, CommandLineOptions options, SpanTimeFilter? filter)
+    {
         var configuration = ExporterConfigurationResolver.Resolve(options, Environment.GetEnvironmentVariable);
         if (configuration.Error is not null)
         {
@@ -57,7 +69,7 @@ internal static class Importer
         var resolved = configuration.Configuration!;
         var retryOptions = RetryOptions.FromMaxRetries(options.MaxRetries ?? RetryOptions.Default.MaxAttempts - 1);
 
-        Console.WriteLine($"Importing '{options.InputFile}'");
+        DescribeInputs("Importing", inputFiles);
         Console.WriteLine($"  -> {resolved.Protocol.ToString().ToUpperInvariant()} {resolved.Endpoint}");
         if (options.MaxBatchesPerSecond is { } rate)
             Console.WriteLine($"  rate limit: {rate:G} batches/sec");
@@ -87,19 +99,25 @@ internal static class Importer
             ? new BatchRateLimiter(batchesPerSecond, TimeProvider.System)
             : null;
 
-        var enricher = SpanEnricher.Create(
-            options.NoLogFileName ? null : Path.GetFileName(options.InputFile),
-            options.Attributes);
-        if (enricher.HasAttributes)
+        // log.file.name is enriched per file (each gets its own name); --attribute values
+        // are the same everywhere. Describe both up front rather than once per file. With a
+        // single file we can show the concrete name; a directory gets a generic note since
+        // the value differs per file.
+        if (!options.NoLogFileName)
+            Console.WriteLine(inputFiles.Count == 1
+                ? $"  adding attribute: log.file.name={Path.GetFileName(inputFiles[0])}"
+                : "  adding attribute: log.file.name (set to each file's name)");
+        if (options.Attributes.Count > 0)
         {
             Console.WriteLine("  adding span attributes:");
-            foreach (var description in enricher.Describe())
-                Console.WriteLine($"    {description}");
+            foreach (var (key, value) in options.Attributes)
+                Console.WriteLine($"    {key}={value}");
         }
 
-        var runner = new ImportRunner(new InputStreamFactory(), exporter, rateLimiter, enricher, filter);
+        var inputStreamFactory = new InputStreamFactory();
 
-        // By default we also summarise what was exported; --no-inspect skips it.
+        // By default we also summarise what was exported; --no-inspect skips it. One
+        // inspector spans every file so the closing summary covers the whole import.
         var inspector = options.NoInspect ? null : new TraceInspector();
 
         var stopwatch = Stopwatch.StartNew();
@@ -111,23 +129,76 @@ internal static class Importer
 
         try
         {
-            var result = await runner.RunAsync(options.InputFile, progress, ReportDiagnostic, inspector, cancellation.Token);
-            stopwatch.Stop();
-            Console.Write("\r");
-            Console.WriteLine($"Done. Exported {result.BatchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
-
-            if (inspector is not null)
-                PrintSummary(inspector.BuildSummary(result.BatchCount));
-
-            if (result.RejectedSpanCount > 0)
+            var batchCount = 0L;
+            var rejectedSpanCount = 0L;
+            var failedFiles = new List<string>();
+            var consecutiveFailures = 0;
+            var aborted = false;
+            foreach (var inputFile in inputFiles)
             {
-                Console.Error.WriteLine(
-                    $"WARNING: the collector rejected {result.RejectedSpanCount} span(s). " +
-                    "They were accepted at the transport level but not stored upstream (see warnings above).");
-                return ExitCode.PartialSuccess;
+                // A fresh enricher per file so log.file.name reflects the file in hand.
+                var enricher = SpanEnricher.Create(
+                    options.NoLogFileName ? null : Path.GetFileName(inputFile),
+                    options.Attributes);
+                var runner = new ImportRunner(inputStreamFactory, exporter, rateLimiter, enricher, filter);
+
+                try
+                {
+                    var result = await runner.RunAsync(
+                        inputFile, progress, ReportDiagnostic, inspector, cancellation.Token, batchCount);
+                    batchCount = result.BatchCount;
+                    rejectedSpanCount += result.RejectedSpanCount;
+                    consecutiveFailures = 0;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellation.Token.IsCancellationRequested)
+                {
+                    // Isolate per-file failures: note the file and carry on, so one bad
+                    // file in a directory doesn't sink the rest of the import. Cancellation
+                    // is excluded above so Ctrl+C still aborts the whole run.
+                    Console.Write("\r");
+                    Console.Error.WriteLine($"warning: failed to import '{inputFile}': {ex.Message}");
+                    failedFiles.Add(inputFile);
+
+                    // A run of failures usually means the upstream is down rather than a few
+                    // bad files, so stop rather than churn through the rest of the directory.
+                    if (++consecutiveFailures >= MaxConsecutiveFailures)
+                    {
+                        aborted = true;
+                        break;
+                    }
+                }
             }
 
-            return ExitCode.Success;
+            stopwatch.Stop();
+            Console.Write("\r");
+            Console.WriteLine($"Done. Exported {batchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
+
+            if (inspector is not null)
+                PrintSummary(inspector.BuildSummary(batchCount));
+
+            if (rejectedSpanCount > 0)
+                Console.Error.WriteLine(
+                    $"WARNING: the collector rejected {rejectedSpanCount} span(s). " +
+                    "They were accepted at the transport level but not stored upstream (see warnings above).");
+
+            if (failedFiles.Count > 0)
+            {
+                // List the specific files that failed -- only the failures, so the output
+                // stays small even when a directory holds hundreds of files.
+                Console.Error.WriteLine(aborted
+                    ? $"ERROR: aborted after {MaxConsecutiveFailures} consecutive failures; {failedFiles.Count} of {inputFiles.Count} file(s) failed to import:"
+                    : $"WARNING: {failedFiles.Count} of {inputFiles.Count} file(s) failed to import:");
+                foreach (var file in failedFiles)
+                    Console.Error.WriteLine($"  {file}");
+
+                // An aborted run, or one where nothing succeeded, is a hard failure;
+                // otherwise some files made it through, so it's a partial success.
+                return aborted || failedFiles.Count == inputFiles.Count
+                    ? ExitCode.RuntimeError
+                    : ExitCode.PartialSuccess;
+            }
+
+            return rejectedSpanCount > 0 ? ExitCode.PartialSuccess : ExitCode.Success;
         }
         catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested)
         {
@@ -149,9 +220,9 @@ internal static class Importer
         }
     }
 
-    static async Task<int> RunInspectAsync(string inputFile, CommandLineOptions options, SpanTimeFilter? filter)
+    static async Task<int> RunInspectAsync(IReadOnlyList<string> inputFiles, CommandLineOptions options, SpanTimeFilter? filter)
     {
-        Console.WriteLine($"Inspecting '{inputFile}' (read-only, nothing will be exported)");
+        DescribeInputs("Inspecting", inputFiles, " (read-only, nothing will be exported)");
         PrintTimeWindow(Console.Out, options);
 
         using var cancellation = new ConsoleCancellation();
@@ -165,13 +236,54 @@ internal static class Importer
         var stopwatch = Stopwatch.StartNew();
         try
         {
+            // One inspector and a running batch count fold every file into a single summary.
             var runner = new InspectRunner(new InputStreamFactory(), filter);
-            var summary = await runner.RunAsync(inputFile, progress, cancellation.Token);
-            stopwatch.Stop();
+            var inspector = new TraceInspector();
+            var batchCount = 0L;
+            var failedFiles = new List<string>();
+            var consecutiveFailures = 0;
+            var aborted = false;
+            foreach (var inputFile in inputFiles)
+            {
+                try
+                {
+                    batchCount = await runner.RunAsync(inputFile, inspector, progress, batchCount, cancellation.Token);
+                    consecutiveFailures = 0;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellation.Token.IsCancellationRequested)
+                {
+                    // Skip a bad file and keep going so one unreadable file doesn't sink the
+                    // whole inspection. Cancellation is excluded so Ctrl+C still stops the run.
+                    Console.Write("\r");
+                    Console.Error.WriteLine($"warning: failed to read '{inputFile}': {ex.Message}");
+                    failedFiles.Add(inputFile);
 
+                    if (++consecutiveFailures >= MaxConsecutiveFailures)
+                    {
+                        aborted = true;
+                        break;
+                    }
+                }
+            }
+
+            stopwatch.Stop();
             Console.Write("\r");
-            Console.WriteLine($"Done. Read {summary.BatchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
-            PrintSummary(summary);
+            Console.WriteLine($"Done. Read {batchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
+            PrintSummary(inspector.BuildSummary(batchCount));
+
+            if (failedFiles.Count > 0)
+            {
+                Console.Error.WriteLine(aborted
+                    ? $"ERROR: aborted after {MaxConsecutiveFailures} consecutive failures; {failedFiles.Count} of {inputFiles.Count} file(s) failed to read:"
+                    : $"WARNING: {failedFiles.Count} of {inputFiles.Count} file(s) failed to read:");
+                foreach (var file in failedFiles)
+                    Console.Error.WriteLine($"  {file}");
+
+                return aborted || failedFiles.Count == inputFiles.Count
+                    ? ExitCode.RuntimeError
+                    : ExitCode.PartialSuccess;
+            }
+
             return ExitCode.Success;
         }
         catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested)
@@ -218,6 +330,20 @@ internal static class Importer
             Console.WriteLine($"    {entry.Count.ToString("N0").PadLeft(countWidth)}  {entry.Name}");
     }
 
+    // "Importing 'traces.jsonl'" for a single file, or just the file count when a directory
+    // resolved to several -- listing every file is too noisy for large directories. The verb
+    // ("Importing"/"Inspecting") and an optional suffix keep the line consistent with the banner.
+    static void DescribeInputs(string verb, IReadOnlyList<string> inputFiles, string suffix = "")
+    {
+        if (inputFiles.Count == 1)
+        {
+            Console.WriteLine($"{verb} '{inputFiles[0]}'{suffix}");
+            return;
+        }
+
+        Console.WriteLine($"{verb} {inputFiles.Count} files{suffix}.");
+    }
+
     static void PrintTimeWindow(TextWriter writer, CommandLineOptions options)
     {
         if (options.From is { } from)
@@ -243,12 +369,14 @@ internal static class Importer
         writer.WriteLine("OtelImporter - stream OpenTelemetry trace files to an OTLP endpoint.");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  OtelImporter <input-file> [--endpoint <url>] [--protocol <grpc|http>]");
+        writer.WriteLine("  OtelImporter <input> [--endpoint <url>] [--protocol <grpc|http>]");
         writer.WriteLine("               [--max-rate <batches/sec>] [--max-retries <count>]");
-        writer.WriteLine("  OtelImporter <input-file> --inspect");
+        writer.WriteLine("  OtelImporter <input> --inspect");
         writer.WriteLine();
         writer.WriteLine("Arguments:");
-        writer.WriteLine("  <input-file>            Path to a .jsonl or .jsonl.zst OTLP trace file.");
+        writer.WriteLine("  <input>                 Path to a .jsonl or .jsonl.zst OTLP trace file, or a");
+        writer.WriteLine("                          directory; every .jsonl/.jsonl.zst file directly inside");
+        writer.WriteLine("                          it is processed in name order.");
         writer.WriteLine();
         writer.WriteLine("Options:");
         writer.WriteLine("  -e, --endpoint <url>    Upstream OTLP endpoint. Overrides environment variables.");

@@ -34,16 +34,21 @@ internal sealed class ImportRunner
         _filter = filter;
     }
 
+    // startingBatchCount lets a caller chain several files through one exporter: the
+    // returned BatchCount, progress reports and "batch N" diagnostics all continue from
+    // it, so numbering runs unbroken across an entire directory. RejectedSpanCount is
+    // counted for this file only -- the caller sums it across files.
     public async Task<ImportResult> RunAsync(
         string inputFile,
         IProgress<long>? progress = null,
         Action<string>? onDiagnostic = null,
         TraceInspector? inspector = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long startingBatchCount = 0)
     {
         await using var stream = _inputStreamFactory.Open(inputFile);
 
-        var batchCount = 0L;
+        var batchCount = startingBatchCount;
         var rejectedSpanCount = 0L;
         await foreach (var line in JsonlLineReader.ReadLinesAsync(stream, cancellationToken).ConfigureAwait(false))
         {

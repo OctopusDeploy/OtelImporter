@@ -228,4 +228,157 @@ public class OtlpExportEndToEndTests
 
         Assert.Equal(ExitCode.UsageError, exitCode);
     }
+
+    [Theory]
+    [InlineData("http")]
+    [InlineData("grpc")]
+    public async Task ImportsEveryFileInADirectoryWithPerFileLogName(string protocol)
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+        var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
+
+        var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
+        try
+        {
+            // Two copies of the sample under different names: one combined import.
+            File.Copy(TestDataPath("sample-traces.jsonl"), Path.Combine(dir, "a.jsonl"));
+            File.Copy(TestDataPath("sample-traces.jsonl"), Path.Combine(dir, "b.jsonl"));
+
+            var exitCode = await Importer.RunAsync(
+            [
+                dir,
+                "--endpoint", endpoint.ToString(),
+                "--protocol", protocol,
+            ]);
+
+            Assert.Equal(ExitCode.Success, exitCode);
+            Assert.Equal(2 * ExpectedBatches, server.Received.RequestCount);
+            Assert.Equal(2 * ExpectedSpans, server.Received.SpanCount);
+            // Each file's spans carry that file's own name.
+            Assert.Equal(ExpectedSpans, server.Received.CountAttribute("log.file.name", "a.jsonl"));
+            Assert.Equal(ExpectedSpans, server.Received.CountAttribute("log.file.name", "b.jsonl"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ContinuesPastAFailingFileAndReportsPartialSuccess()
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+
+        var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
+        try
+        {
+            // "bad.jsonl" sorts first and is unparseable; "good.jsonl" must still export in full.
+            File.WriteAllText(Path.Combine(dir, "bad.jsonl"), "this is not valid otlp json\n");
+            File.Copy(TestDataPath("sample-traces.jsonl"), Path.Combine(dir, "good.jsonl"));
+
+            var exitCode = await Importer.RunAsync(
+            [
+                dir,
+                "--endpoint", server.HttpEndpoint.ToString(),
+                "--protocol", "http",
+            ]);
+
+            // One of two files failed -> partial success, and the good file landed in full.
+            Assert.Equal(ExitCode.PartialSuccess, exitCode);
+            Assert.Equal(ExpectedSpans, server.Received.SpanCount);
+            Assert.Equal(ExpectedSpans, server.Received.CountAttribute("log.file.name", "good.jsonl"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AbortsAfterThreeConsecutiveFailures()
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+
+        var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
+        try
+        {
+            // Three unparseable files sort ahead of the good one; the run should give up
+            // on the third failure and never reach "4-good.jsonl".
+            File.WriteAllText(Path.Combine(dir, "1-bad.jsonl"), "not valid\n");
+            File.WriteAllText(Path.Combine(dir, "2-bad.jsonl"), "not valid\n");
+            File.WriteAllText(Path.Combine(dir, "3-bad.jsonl"), "not valid\n");
+            File.Copy(TestDataPath("sample-traces.jsonl"), Path.Combine(dir, "4-good.jsonl"));
+
+            var exitCode = await Importer.RunAsync(
+            [
+                dir,
+                "--endpoint", server.HttpEndpoint.ToString(),
+                "--protocol", "http",
+            ]);
+
+            Assert.Equal(ExitCode.RuntimeError, exitCode);
+            // The good file was never reached, so nothing landed upstream.
+            Assert.Equal(0, server.Received.SpanCount);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DoesNotAbortWhenFailuresAreBrokenUpBySuccesses()
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+
+        var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
+        try
+        {
+            // Four failures, but never three in a row (a good file resets the streak), so
+            // the run continues to completion and both good files export.
+            File.WriteAllText(Path.Combine(dir, "1-bad.jsonl"), "not valid\n");
+            File.WriteAllText(Path.Combine(dir, "2-bad.jsonl"), "not valid\n");
+            File.Copy(TestDataPath("sample-traces.jsonl"), Path.Combine(dir, "3-good.jsonl"));
+            File.WriteAllText(Path.Combine(dir, "4-bad.jsonl"), "not valid\n");
+            File.WriteAllText(Path.Combine(dir, "5-bad.jsonl"), "not valid\n");
+            File.Copy(TestDataPath("sample-traces.jsonl"), Path.Combine(dir, "6-good.jsonl"));
+
+            var exitCode = await Importer.RunAsync(
+            [
+                dir,
+                "--endpoint", server.HttpEndpoint.ToString(),
+                "--protocol", "http",
+            ]);
+
+            // Some files failed but the run finished -> partial success, both good files landed.
+            Assert.Equal(ExitCode.PartialSuccess, exitCode);
+            Assert.Equal(2 * ExpectedSpans, server.Received.SpanCount);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task InspectSkipsUnreadableFilesAndReportsPartialSuccess()
+    {
+        // Inspect is read-only, so no endpoint is configured here at all.
+        var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
+        try
+        {
+            // One unparseable file alongside a good one: inspect should report on the good
+            // file and flag the bad one rather than dying on it.
+            File.WriteAllText(Path.Combine(dir, "bad.jsonl"), "this is not valid otlp json\n");
+            File.Copy(TestDataPath("sample-traces.jsonl"), Path.Combine(dir, "good.jsonl"));
+
+            var exitCode = await Importer.RunAsync([dir, "--inspect"]);
+
+            Assert.Equal(ExitCode.PartialSuccess, exitCode);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }

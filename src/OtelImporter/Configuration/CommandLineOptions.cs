@@ -25,7 +25,7 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 
 // Hand-rolled argument parsing keeps the dependency surface (and AOT footprint) small.
 // Supported:
-//   <input-file>            positional, the *.jsonl or *.jsonl.zst trace file
+//   <input>                 positional, a *.jsonl/*.jsonl.zst trace file or a directory of them
 //   --endpoint, -e <url>    upstream OTLP endpoint (overrides environment variables)
 //   --protocol, -p <value>  grpc | http (overrides port sniffing)
 //   --max-rate, -r <value>  throttle: maximum batches per second
