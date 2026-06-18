@@ -108,6 +108,37 @@ public class ImportRunnerTests
         Assert.Empty(diagnostics);
     }
 
+    [Fact]
+    public async Task ChainsBatchNumberingAcrossFilesViaStartingBatchCount()
+    {
+        // Simulates a second file in a directory: numbering continues from the first.
+        var input = new StubInputStreamFactory(Lines(Batch("a"), Batch("b")));
+        var progress = new SynchronousProgress();
+
+        var result = await new ImportRunner(input, new RecordingExporter())
+            .RunAsync("ignored", progress, startingBatchCount: 5);
+
+        Assert.Equal(7, result.BatchCount);
+        Assert.Equal([6, 7], progress.Reports);
+    }
+
+    [Fact]
+    public async Task SharedInspectorAccumulatesAcrossRuns()
+    {
+        var inspector = new TraceInspector();
+        var first = new StubInputStreamFactory(Lines(Batch("a"), Batch("a")));
+        var second = new StubInputStreamFactory(Lines(Batch("b")));
+
+        var r1 = await new ImportRunner(first, new RecordingExporter()).RunAsync("f1", inspector: inspector);
+        var r2 = await new ImportRunner(second, new RecordingExporter())
+            .RunAsync("f2", inspector: inspector, startingBatchCount: r1.BatchCount);
+
+        Assert.Equal(3, r2.BatchCount);
+        var summary = inspector.BuildSummary(r2.BatchCount);
+        Assert.Equal(3, summary.SpanCount);
+        Assert.Equal(new SpanNameCount("a", 2), summary.TopSpanNames[0]);
+    }
+
     // Deterministic, synchronous progress sink (Progress<T> dispatches asynchronously).
     sealed class SynchronousProgress : IProgress<long>
     {

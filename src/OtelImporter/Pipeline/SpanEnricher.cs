@@ -16,8 +16,6 @@ internal sealed class SpanEnricher
         _attributes = [.. attributes];
     }
 
-    public bool HasAttributes => _attributes.Count > 0;
-
     public void Enrich(ExportTraceServiceRequest request)
     {
         if (_attributes.Count == 0 || request.ResourceSpans is null)
@@ -38,10 +36,6 @@ internal sealed class SpanEnricher
             }
         }
     }
-
-    // "name=value" for each attribute, for the startup banner.
-    public IReadOnlyList<string> Describe() =>
-        [.. _attributes.Select(a => $"{a.Key}={a.Value?.StringValue}")];
 
     // Builds the enricher from the resolved options: the automatic log.file.name (unless
     // suppressed) followed by any --attribute values, all as string-valued attributes.

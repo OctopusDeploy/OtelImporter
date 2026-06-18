@@ -15,6 +15,22 @@ OtelImporter traces-1776.jsonl.zst --endpoint http://localhost:4318 --max-rate 1
 _Note:_ When running through a local OpenTelemetry collector, it is likely to silently drop spans that exceed the rate-limit.
 If you are sending data directly to jaeger or signoz, you may not need `--max-rate` or a higher rate may be fine.
 
+### Upload a whole directory of trace files
+
+Point the importer at a directory and it processes every `.jsonl` / `.jsonl.zst` file
+directly inside it (in name order), through the one connection. Subdirectories are not
+searched. The end-of-run summary covers all files combined, and each file's spans get a
+`log.file.name` attribute set to that file's name.
+
+If a file fails to import, the run carries on with the remaining files and lists the ones
+that failed at the end. The exit code is then `3` (partial success) if some files still
+succeeded, or `2` if every file failed. If three files in a row fail — usually a sign the
+upstream is down rather than a few bad files — the run stops early and exits with code `2`.
+
+```bash
+OtelImporter ./traces --endpoint http://localhost:4318 --max-rate 10
+```
+
 ### Upload a trace file to Honeycomb
 
 ```bash
@@ -34,7 +50,7 @@ OtelImporter traces-1776.jsonl.zst --inspect
 
 | Argument / Option        | Description                                                        |
 | ------------------------ | ----------------------------------------------------------------- |
-| `<input-file>`           | Path to a `.jsonl` or `.jsonl.zst` OTLP trace file (positional).   |
+| `<input>`                | Path to a `.jsonl`/`.jsonl.zst` trace file, or a directory of them (positional). |
 | `-e`, `--endpoint <url>` | Upstream OTLP endpoint. Overrides the environment variables.       |
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
