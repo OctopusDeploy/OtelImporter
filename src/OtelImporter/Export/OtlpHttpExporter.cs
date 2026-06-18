@@ -15,19 +15,32 @@ internal sealed class OtlpHttpExporter : ITraceExporter
     readonly HttpClient _httpClient;
     readonly Uri _endpoint;
     readonly bool _ownsHttpClient;
+    readonly long? _maxBatchBytes;
 
-    public OtlpHttpExporter(HttpClient httpClient, Uri endpoint, bool ownsHttpClient = false)
+    public OtlpHttpExporter(HttpClient httpClient, Uri endpoint, bool ownsHttpClient = false, long? maxBatchBytes = null)
     {
         _httpClient = httpClient;
         _endpoint = endpoint;
         _ownsHttpClient = ownsHttpClient;
+        _maxBatchBytes = maxBatchBytes;
     }
 
-    public async Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+    // Serialize to OTLP/JSON. With no size limit the whole batch is one frame (a single
+    // serialization); otherwise spans are packed into frames measured as real JSON bytes.
+    public PreparedBatches Prepare(ExportTraceServiceRequest request)
     {
-        var json = JsonSerializer.SerializeToUtf8Bytes(request, OtlpJsonContext.Default.ExportTraceServiceRequest);
+        // Serialize the whole batch once. With no limit, or when it already fits, that single
+        // frame is the result; only an oversized batch pays the span-by-span packing cost.
+        var whole = JsonSerializer.SerializeToUtf8Bytes(request, OtlpJsonContext.Default.ExportTraceServiceRequest);
+        if (_maxBatchBytes is not { } maxBytes || whole.Length <= maxBytes)
+            return new PreparedBatches([whole], 0);
 
-        using var content = new ByteArrayContent(json);
+        return SpanBatcher.Pack(request, maxBytes, new JsonBatchBuilder());
+    }
+
+    public async Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
+    {
+        using var content = new ReadOnlyMemoryContent(frame);
         content.Headers.ContentType = Json;
 
         using var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken).ConfigureAwait(false);

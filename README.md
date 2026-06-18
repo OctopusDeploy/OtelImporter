@@ -35,17 +35,18 @@ OtelImporter ./traces --endpoint http://localhost:4318 --max-rate 10
 
 Some upstreams reject batches over a size limit (for example gRPC's default 4 MB message
 limit). Pass `--max-batch-size <kb>` and any batch larger than that is broken into several
-smaller batches — split by span, preserving each span's resource/scope — before sending.
-Size is measured as OTLP/JSON. A single span that on its own exceeds the limit can't be
-split, so it is skipped (with a warning) and the run finishes with exit code `3`.
+smaller batches — split by span, preserving each span's resource/scope — as it is written
+to the wire. The size is measured in the format actually sent (protobuf for gRPC, JSON for
+HTTP), so the same limit yields more, smaller batches over HTTP than over the more compact
+gRPC. A single span that on its own exceeds the limit can't be split, so it is skipped
+(with a warning) and the run finishes with exit code `3`.
 
 ```bash
 OtelImporter ./traces.json --endpoint http://localhost:4318 --max-batch-size 512
 ```
 
-With `--inspect`, nothing is sent, but the option is still honoured for reporting: the
-batch count reflects how many batches an export would split into, and spans that would be
-skipped are left out of the summary (and called out in a note).
+`--max-batch-size` only affects exporting; `--inspect` ignores it (each input line counts
+as one batch).
 
 ### Upload a trace file to Honeycomb
 
@@ -71,7 +72,7 @@ OtelImporter traces-1776.jsonl.zst --inspect
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
 | `--max-retries <n>`      | Retries per batch on transient failures (default: 4, `0` disables).|
-| `--max-batch-size <kb>`  | Split batches larger than `n` KB into smaller ones (default: off). With `--inspect`, the reported batch count reflects splitting but nothing is sent. |
+| `--max-batch-size <kb>`  | Split batches larger than `n` KB into smaller ones as they're sent (default: off). Export only; ignored by `--inspect`. |
 | `-i`, `--inspect`        | Read-only: summarise the file instead of exporting (see below).    |
 | `--no-inspect`           | Export without printing the end-of-run summary.                    |
 | `-a`, `--attribute k=v`  | Add an attribute to every exported span. Repeatable.              |

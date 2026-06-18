@@ -5,40 +5,30 @@ using OtelImporter.Pipeline;
 
 namespace OtelImporter.Inspect;
 
-// The running batch count after a file (so it chains across a directory) plus the number
-// of spans that would be skipped on export because they exceed the max batch size. With
-// no size cap, BatchCount is just the line count and SkippedSpanCount is zero.
-internal sealed record InspectRunResult(long BatchCount, long SkippedSpanCount);
-
 // Drives a read-only inspection pass: open the (optionally compressed) input stream,
 // read it line by line, deserialize each batch into the object model and feed it to a
 // TraceInspector. Nothing is exported. Like the import path, everything is streamed so
 // memory use stays flat regardless of file size. An optional time filter drops
 // out-of-window spans so the summary matches what an export with the same window would.
 //
-// When a max batch size is set, BatchCount reflects how many batches an export would send
-// (oversized batches counted as if split) and the span counts cover only what would be sent
-// -- spans too large to fit any batch are excluded, as on export. The size is measured without
-// enrichment, so the real export may split into slightly more batches once
-// log.file.name/attributes are added.
+// Inspect is concerned only with the file's spans, not with how they would be batched on
+// the wire, so --max-batch-size has no effect here: each input line counts as one batch.
 internal sealed class InspectRunner
 {
     readonly IInputStreamFactory _inputStreamFactory;
     readonly SpanTimeFilter? _filter;
-    readonly long? _maxBatchBytes;
 
-    public InspectRunner(IInputStreamFactory inputStreamFactory, SpanTimeFilter? filter = null, long? maxBatchBytes = null)
+    public InspectRunner(IInputStreamFactory inputStreamFactory, SpanTimeFilter? filter = null)
     {
         _inputStreamFactory = inputStreamFactory;
         _filter = filter;
-        _maxBatchBytes = maxBatchBytes;
     }
 
-    // The caller owns the inspector and the running batch count: this reads one file into
-    // the shared inspector and returns the new running totals. Chaining several files through
-    // the same inspector lets the caller build a single summary (once, at the end) covering
-    // the whole directory, rather than rebuilding it per file.
-    public async Task<InspectRunResult> RunAsync(
+    // The caller owns the inspector and the running batch count: this reads one file into the
+    // shared inspector and returns the new batch count. Chaining several files through the same
+    // inspector lets the caller build a single summary (once, at the end) covering the whole
+    // directory, rather than rebuilding it per file.
+    public async Task<long> RunAsync(
         string inputFile,
         TraceInspector inspector,
         IProgress<long>? progress = null,
@@ -48,7 +38,6 @@ internal sealed class InspectRunner
         await using var stream = _inputStreamFactory.Open(inputFile);
 
         var batchCount = startingBatchCount;
-        var skippedSpanCount = 0L;
         await foreach (var line in JsonlLineReader.ReadLinesAsync(stream, cancellationToken).ConfigureAwait(false))
         {
             var request = JsonSerializer.Deserialize(line.Span, OtlpJsonContext.Default.ExportTraceServiceRequest);
@@ -62,27 +51,11 @@ internal sealed class InspectRunner
                     continue; // entire batch outside the window
             }
 
-            // With a size cap, count the batches an export would send and summarise only the
-            // spans those batches carry, so spans too large to fit any batch are excluded from
-            // the summary (matching the export path). Without a cap, each line is one batch and
-            // every span is counted.
-            if (_maxBatchBytes is { } maxBytes)
-            {
-                var split = BatchSplitter.Split(request, maxBytes);
-                foreach (var batch in split.Batches)
-                    inspector.Add(batch);
-                batchCount += split.Batches.Count;
-                skippedSpanCount += split.SkippedSpanCount;
-            }
-            else
-            {
-                inspector.Add(request);
-                batchCount++;
-            }
-
+            inspector.Add(request);
+            batchCount++;
             progress?.Report(batchCount);
         }
 
-        return new InspectRunResult(batchCount, skippedSpanCount);
+        return batchCount;
     }
 }

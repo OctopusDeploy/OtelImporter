@@ -21,18 +21,32 @@ internal sealed class OtlpGrpcExporter : ITraceExporter
     readonly HttpClient _httpClient;
     readonly Uri _endpoint;
     readonly bool _ownsHttpClient;
+    readonly long? _maxBatchBytes;
 
-    public OtlpGrpcExporter(HttpClient httpClient, Uri endpoint, bool ownsHttpClient = false)
+    public OtlpGrpcExporter(HttpClient httpClient, Uri endpoint, bool ownsHttpClient = false, long? maxBatchBytes = null)
     {
         _httpClient = httpClient;
         _endpoint = endpoint;
         _ownsHttpClient = ownsHttpClient;
+        _maxBatchBytes = maxBatchBytes;
     }
 
-    public async Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+    // Serialize to OTLP protobuf. With no size limit the whole batch is one frame (a single
+    // serialization); otherwise spans are packed into frames measured as real protobuf bytes.
+    public PreparedBatches Prepare(ExportTraceServiceRequest request)
     {
-        var payload = OtlpProtobufSerializer.Serialize(request);
-        var frame = Frame(payload);
+        // Serialize the whole batch once. With no limit, or when it already fits, that single
+        // frame is the result; only an oversized batch pays the span-by-span packing cost.
+        var whole = OtlpProtobufSerializer.Serialize(request);
+        if (_maxBatchBytes is not { } maxBytes || whole.Length <= maxBytes)
+            return new PreparedBatches([whole], 0);
+
+        return SpanBatcher.Pack(request, maxBytes, new ProtobufBatchBuilder());
+    }
+
+    public async Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        var frame = Frame(payload.Span);
 
         using var content = new ByteArrayContent(frame);
         content.Headers.ContentType = GrpcContentType;

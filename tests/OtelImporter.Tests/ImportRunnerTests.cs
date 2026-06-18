@@ -15,12 +15,8 @@ public class ImportRunnerTests
 
     static string Lines(params string[] batches) => string.Join('\n', batches) + '\n';
 
-    // One batch (one line) whose single scope carries a span per name, for split tests.
-    static string BatchOf(params string[] spanNames) =>
-        $$"""{"resourceSpans":[{"scopeSpans":[{"spans":[{{string.Join(",", spanNames.Select(n => $$"""{"name":"{{n}}"}"""))}}]}]}]}""";
-
     [Fact]
-    public async Task ExportsEachNonEmptyLineAndCountsBatches()
+    public async Task SendsOneFramePerLineAndCountsBatches()
     {
         // A blank line between batches must be skipped.
         var input = new StubInputStreamFactory(Batch("a") + "\n\n" + Batch("b") + "\n" + Batch("c") + "\n");
@@ -33,7 +29,7 @@ public class ImportRunnerTests
     }
 
     [Fact]
-    public async Task ReportsProgressPerBatch()
+    public async Task ReportsProgressPerFrame()
     {
         var input = new StubInputStreamFactory(Lines(Batch("a"), Batch("b"), Batch("c")));
         var exporter = new RecordingExporter();
@@ -42,6 +38,32 @@ public class ImportRunnerTests
         await new ImportRunner(input, exporter).RunAsync("ignored", progress);
 
         Assert.Equal([1, 2, 3], progress.Reports);
+    }
+
+    [Fact]
+    public async Task SendsEveryPreparedFrameAndCountsThem()
+    {
+        // The exporter splits each batch into three frames; the runner sends them all.
+        var input = new StubInputStreamFactory(Lines(Batch("a"), Batch("b")));
+        var exporter = new FramingExporter(framesPerBatch: 3);
+        var progress = new SynchronousProgress();
+
+        var result = await new ImportRunner(input, exporter).RunAsync("ignored", progress);
+
+        Assert.Equal(6, result.BatchCount);     // 2 lines * 3 frames
+        Assert.Equal(6, exporter.SendCount);
+        Assert.Equal([1, 2, 3, 4, 5, 6], progress.Reports);
+    }
+
+    [Fact]
+    public async Task AggregatesSkippedSpansReportedByThePreparedBatches()
+    {
+        var input = new StubInputStreamFactory(Lines(Batch("a"), Batch("b")));
+        var exporter = new FramingExporter(framesPerBatch: 1, skippedPerBatch: 2);
+
+        var result = await new ImportRunner(input, exporter).RunAsync("ignored");
+
+        Assert.Equal(4, result.SkippedSpanCount); // 2 lines * 2 skipped
     }
 
     [Fact]
@@ -78,7 +100,7 @@ public class ImportRunnerTests
     }
 
     [Fact]
-    public async Task AggregatesRejectedSpansAndEmitsADiagnosticPerProblemBatch()
+    public async Task AggregatesRejectedSpansAndEmitsADiagnosticPerProblemFrame()
     {
         var input = new StubInputStreamFactory(Lines(Batch("one"), Batch("two"), Batch("three")));
         // Batches "one" and "three" report rejections; "two" is clean.
@@ -143,53 +165,6 @@ public class ImportRunnerTests
         Assert.Equal(new SpanNameCount("a", 2), summary.TopSpanNames[0]);
     }
 
-    [Fact]
-    public async Task SplitsAnOversizedBatchAcrossMultipleExports()
-    {
-        // Six padded spans (~240 bytes each once re-serialised); an 800-byte cap fits a
-        // couple per batch, so the single input batch must be split into several.
-        var pad = new string('x', 200);
-        var input = new StubInputStreamFactory(BatchOf(pad + "a", pad + "b", pad + "c", pad + "d", pad + "e", pad + "f") + "\n");
-        var exporter = new SpanCollectingExporter();
-
-        var result = await new ImportRunner(input, exporter, maxBatchBytes: 800).RunAsync("ignored");
-
-        Assert.True(result.BatchCount > 1, $"expected a split, got {result.BatchCount} batch(es)");
-        Assert.Equal(0, result.SkippedSpanCount);
-        // Every span survives the split, in order, across the multiple exports.
-        Assert.Equal([pad + "a", pad + "b", pad + "c", pad + "d", pad + "e", pad + "f"], exporter.AllSpanNames);
-    }
-
-    [Fact]
-    public async Task SkipsSpansLargerThanTheMaxBatchSizeButSendsTheRest()
-    {
-        // The middle span alone exceeds the cap; the small ones still go.
-        var huge = new string('x', 500);
-        var input = new StubInputStreamFactory(BatchOf("a", huge, "b") + "\n");
-        var exporter = new SpanCollectingExporter();
-
-        var result = await new ImportRunner(input, exporter, maxBatchBytes: 300).RunAsync("ignored");
-
-        Assert.Equal(1, result.SkippedSpanCount);
-        Assert.Equal(["a", "b"], exporter.AllSpanNames);
-    }
-
-    [Fact]
-    public async Task SummaryExcludesSkippedSpans()
-    {
-        // "a", an oversized span, then "b" in one scope; the oversized span is skipped, so the
-        // inspector (and thus the end-of-run summary) should count only the two that were sent.
-        var huge = new string('x', 500);
-        var input = new StubInputStreamFactory(BatchOf("a", huge, "b") + "\n");
-        var inspector = new TraceInspector();
-
-        var result = await new ImportRunner(input, new SpanCollectingExporter(), maxBatchBytes: 300)
-            .RunAsync("ignored", inspector: inspector);
-
-        Assert.Equal(1, result.SkippedSpanCount);
-        Assert.Equal(2, inspector.BuildSummary(result.BatchCount).SpanCount);
-    }
-
     // Deterministic, synchronous progress sink (Progress<T> dispatches asynchronously).
     sealed class SynchronousProgress : IProgress<long>
     {
@@ -202,34 +177,41 @@ public class ImportRunnerTests
         public Stream Open(string path) => new MemoryStream(Encoding.UTF8.GetBytes(content));
     }
 
+    // Captures each batch's first span name in Prepare (one frame per batch) and replays the
+    // configured outcome for that frame from SendAsync.
     sealed class RecordingExporter(Func<string, ExportOutcome>? outcome = null) : ITraceExporter
     {
         readonly Func<string, ExportOutcome> _outcome = outcome ?? (_ => ExportOutcome.Accepted);
+        readonly Queue<ExportOutcome> _pending = new();
 
         public List<string> SpanNames { get; } = [];
 
-        public Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+        public PreparedBatches Prepare(ExportTraceServiceRequest request)
         {
             var name = request.ResourceSpans?[0].ScopeSpans?[0].Spans?[0].Name ?? "";
             SpanNames.Add(name);
-            return Task.FromResult(_outcome(name));
+            _pending.Enqueue(_outcome(name));
+            return new PreparedBatches([ReadOnlyMemory<byte>.Empty], 0);
         }
+
+        public Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken) =>
+            Task.FromResult(_pending.Dequeue());
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    // Records the names of every span across every exported batch, so split output can be
-    // checked end to end (RecordingExporter only keeps each batch's first span).
-    sealed class SpanCollectingExporter : ITraceExporter
+    // Splits every batch into a fixed number of frames (and reports a fixed skipped count) so
+    // the runner's frame loop and aggregation can be exercised without real serialization.
+    sealed class FramingExporter(int framesPerBatch = 1, long skippedPerBatch = 0) : ITraceExporter
     {
-        public List<string> AllSpanNames { get; } = [];
+        public int SendCount { get; private set; }
 
-        public Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+        public PreparedBatches Prepare(ExportTraceServiceRequest request) =>
+            new([.. Enumerable.Repeat(ReadOnlyMemory<byte>.Empty, framesPerBatch)], skippedPerBatch);
+
+        public Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
         {
-            foreach (var rs in request.ResourceSpans ?? [])
-                foreach (var ss in rs.ScopeSpans ?? [])
-                    foreach (var s in ss.Spans ?? [])
-                        AllSpanNames.Add(s.Name ?? "");
+            SendCount++;
             return Task.FromResult(ExportOutcome.Accepted);
         }
 

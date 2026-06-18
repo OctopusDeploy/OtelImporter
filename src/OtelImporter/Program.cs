@@ -95,7 +95,7 @@ internal static class Importer
             Console.WriteLine($"  http headers: {string.Join(", ", resolved.Headers.Select(h => h.Key))}");
 
         var factory = new ExporterFactory();
-        var baseExporter = factory.Create(resolved, resolved.Headers);
+        var baseExporter = factory.Create(resolved, resolved.Headers, maxBatchBytes);
         await using ITraceExporter exporter = retryOptions.MaxAttempts > 1
             ? new RetryingTraceExporter(baseExporter, retryOptions, TimeProvider.System, ReportDiagnostic)
             : baseExporter;
@@ -146,7 +146,7 @@ internal static class Importer
                 var enricher = SpanEnricher.Create(
                     options.NoLogFileName ? null : Path.GetFileName(inputFile),
                     options.Attributes);
-                var runner = new ImportRunner(inputStreamFactory, exporter, rateLimiter, enricher, filter, maxBatchBytes);
+                var runner = new ImportRunner(inputStreamFactory, exporter, rateLimiter, enricher, filter);
 
                 try
                 {
@@ -236,13 +236,7 @@ internal static class Importer
     static async Task<int> RunInspectAsync(IReadOnlyList<string> inputFiles, CommandLineOptions options, SpanTimeFilter? filter)
     {
         DescribeInputs("Inspecting", inputFiles, " (read-only, nothing will be exported)");
-        // --max-batch-size doesn't change what's read, only how many batches an export would
-        // send, so inspect reports that count rather than ignoring the option outright.
-        if (options.MaxBatchSizeKb is { } maxBatchKb)
-            Console.WriteLine($"  max batch size: {maxBatchKb} KB (batch count reflects splitting; export adds attributes, so the real count may be higher)");
         PrintTimeWindow(Console.Out, options);
-
-        long? maxBatchBytes = options.MaxBatchSizeKb is { } kb ? kb * 1024L : null;
 
         using var cancellation = new ConsoleCancellation();
 
@@ -256,10 +250,9 @@ internal static class Importer
         try
         {
             // One inspector and a running batch count fold every file into a single summary.
-            var runner = new InspectRunner(new InputStreamFactory(), filter, maxBatchBytes);
+            var runner = new InspectRunner(new InputStreamFactory(), filter);
             var inspector = new TraceInspector();
             var batchCount = 0L;
-            var skippedSpanCount = 0L;
             var failedFiles = new List<string>();
             var consecutiveFailures = 0;
             var aborted = false;
@@ -267,9 +260,7 @@ internal static class Importer
             {
                 try
                 {
-                    var result = await runner.RunAsync(inputFile, inspector, progress, batchCount, cancellation.Token);
-                    batchCount = result.BatchCount;
-                    skippedSpanCount += result.SkippedSpanCount;
+                    batchCount = await runner.RunAsync(inputFile, inspector, progress, batchCount, cancellation.Token);
                     consecutiveFailures = 0;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !cancellation.Token.IsCancellationRequested)
@@ -292,12 +283,6 @@ internal static class Importer
             Console.Write("\r");
             Console.WriteLine($"Done. Read {batchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
             PrintSummary(inspector.BuildSummary(batchCount));
-
-            // Informational only: inspect sends nothing, so this is what an export would do.
-            if (skippedSpanCount > 0)
-                Console.WriteLine(
-                    $"Note: {skippedSpanCount} span(s) exceed the {options.MaxBatchSizeKb} KB max batch size " +
-                    "and would be skipped on export.");
 
             if (failedFiles.Count > 0)
             {
@@ -412,8 +397,7 @@ internal static class Importer
         writer.WriteLine("  -r, --max-rate <n>      Throttle to at most n batches per second (default: unlimited).");
         writer.WriteLine("      --max-retries <n>   Retries per batch on transient failures (default: 4, 0 disables).");
         writer.WriteLine("      --max-batch-size <kb>  Split batches larger than this many KB into smaller ones");
-        writer.WriteLine("                          (by span; default: no splitting). With --inspect, the batch");
-        writer.WriteLine("                          count reflects splitting but nothing is sent.");
+        writer.WriteLine("                          before sending (by span; default: no splitting). Export only.");
         writer.WriteLine("  -i, --inspect           Read-only: summarise the file instead of exporting.");
         writer.WriteLine("                          Export options (endpoint, rate, retries) are ignored.");
         writer.WriteLine("      --no-inspect        Export without printing the end-of-run summary.");

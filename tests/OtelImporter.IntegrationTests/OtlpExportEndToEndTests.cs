@@ -382,25 +382,33 @@ public class OtlpExportEndToEndTests
         }
     }
 
-    [Fact]
-    public async Task SplitsLargeBatchesFromAJsonFileAcrossRequests()
+    [Theory]
+    [InlineData("http")]
+    [InlineData("grpc")]
+    public async Task SplitsLargeBatchesFromAJsonFileAcrossRequests(string protocol)
     {
+        // Runs over both transports: splitting is measured in each one's real wire format
+        // (JSON for http, protobuf for grpc), and the real OTLP server confirms every span
+        // survives the split round-trip.
         await using var server = await TestOtlpServer.StartAsync();
+        var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
 
         var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
         try
         {
-            // A single .json batch of 20 spans (~3 KB once serialised); a 2 KB cap forces it
-            // to be sent as several requests. Also exercises .json input acceptance end to end.
-            var spans = string.Join(",", Enumerable.Range(0, 20).Select(i => $$"""{"name":"span-{{i}}"}"""));
+            // A single .json batch of 20 padded spans (well over 2 KB in both JSON and the more
+            // compact protobuf), so a 2 KB cap forces several requests on either transport. Also
+            // exercises .json input acceptance end to end.
+            var pad = new string('x', 200);
+            var spans = string.Join(",", Enumerable.Range(0, 20).Select(i => $$"""{"name":"{{pad}}-{{i}}"}"""));
             var batch = $$"""{"resourceSpans":[{"scopeSpans":[{"spans":[{{spans}}]}]}]}""";
             File.WriteAllText(Path.Combine(dir, "traces.json"), batch + "\n");
 
             var exitCode = await Importer.RunAsync(
             [
                 Path.Combine(dir, "traces.json"),
-                "--endpoint", server.HttpEndpoint.ToString(),
-                "--protocol", "http",
+                "--endpoint", endpoint.ToString(),
+                "--protocol", protocol,
                 "--max-batch-size", "2",
             ]);
 

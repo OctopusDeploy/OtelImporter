@@ -19,22 +19,19 @@ internal sealed class ImportRunner
     readonly IRateLimiter? _rateLimiter;
     readonly SpanEnricher? _enricher;
     readonly SpanTimeFilter? _filter;
-    readonly long? _maxBatchBytes;
 
     public ImportRunner(
         IInputStreamFactory inputStreamFactory,
         ITraceExporter exporter,
         IRateLimiter? rateLimiter = null,
         SpanEnricher? enricher = null,
-        SpanTimeFilter? filter = null,
-        long? maxBatchBytes = null)
+        SpanTimeFilter? filter = null)
     {
         _inputStreamFactory = inputStreamFactory;
         _exporter = exporter;
         _rateLimiter = rateLimiter;
         _enricher = enricher;
         _filter = filter;
-        _maxBatchBytes = maxBatchBytes;
     }
 
     // startingBatchCount lets a caller chain several files through one exporter: the
@@ -55,25 +52,6 @@ internal sealed class ImportRunner
         var rejectedSpanCount = 0L;
         var skippedSpanCount = 0L;
 
-        // Sends one batch and folds its outcome into the running totals/progress; shared by
-        // the plain path and the split path so numbering and diagnostics behave identically.
-        async Task ExportOneAsync(ExportTraceServiceRequest batch)
-        {
-            if (_rateLimiter is not null)
-                await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
-
-            var outcome = await _exporter.ExportAsync(batch, cancellationToken).ConfigureAwait(false);
-            batchCount++;
-
-            if (outcome.HasProblem)
-            {
-                rejectedSpanCount += outcome.RejectedSpans;
-                onDiagnostic?.Invoke(FormatProblem(batchCount, outcome));
-            }
-
-            progress?.Report(batchCount);
-        }
-
         await foreach (var line in JsonlLineReader.ReadLinesAsync(stream, cancellationToken).ConfigureAwait(false))
         {
             var request = JsonSerializer.Deserialize(line.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
@@ -88,28 +66,30 @@ internal sealed class ImportRunner
                     continue;
             }
 
-            // Enrichment is export-only; it only adds attributes, so it doesn't affect what
-            // the inspector measures (span counts, names, timestamps).
+            // The inspector summarises the file's spans; enrichment is export-only.
+            inspector?.Add(request);
             _enricher?.Enrich(request);
 
-            // With a size cap, an oversized batch is broken into several that each fit;
-            // otherwise the whole batch goes as one. Splitting runs after enrichment so the
-            // measured size matches what is actually sent. The inspector is fed the batches we
-            // actually send, so the summary excludes any spans skipped for being too large.
-            if (_maxBatchBytes is { } maxBytes)
+            // The exporter serializes once and splits to fit the configured size if needed;
+            // each resulting frame is a separate wire request that we rate-limit and send.
+            var prepared = _exporter.Prepare(request);
+            skippedSpanCount += prepared.SkippedSpanCount;
+
+            foreach (var frame in prepared.Frames)
             {
-                var split = BatchSplitter.Split(request, maxBytes);
-                skippedSpanCount += split.SkippedSpanCount;
-                foreach (var batch in split.Batches)
+                if (_rateLimiter is not null)
+                    await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+                var outcome = await _exporter.SendAsync(frame, cancellationToken).ConfigureAwait(false);
+                batchCount++;
+
+                if (outcome.HasProblem)
                 {
-                    inspector?.Add(batch);
-                    await ExportOneAsync(batch).ConfigureAwait(false);
+                    rejectedSpanCount += outcome.RejectedSpans;
+                    onDiagnostic?.Invoke(FormatProblem(batchCount, outcome));
                 }
-            }
-            else
-            {
-                inspector?.Add(request);
-                await ExportOneAsync(request).ConfigureAwait(false);
+
+                progress?.Report(batchCount);
             }
         }
 

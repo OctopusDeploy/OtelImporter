@@ -13,11 +13,11 @@ namespace OtelImporter.Otlp;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(ExportTraceServiceRequest))]
 [JsonSerializable(typeof(ExportTraceServiceResponse))]
-// Serialized in isolation when measuring batch-split sizes (a span, and the per-element cost
-// of opening a new resource/scope group in an output batch).
+// Serialized individually by the HTTP batch builder so each span/resource/scope is encoded
+// once and spliced (via Utf8JsonWriter.WriteRawValue) into the frames being assembled.
 [JsonSerializable(typeof(Span))]
-[JsonSerializable(typeof(ResourceSpans))]
-[JsonSerializable(typeof(ScopeSpans))]
+[JsonSerializable(typeof(Resource))]
+[JsonSerializable(typeof(InstrumentationScope))]
 internal partial class OtlpJsonContext : JsonSerializerContext
 {
 }

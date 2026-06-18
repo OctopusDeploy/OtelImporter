@@ -25,13 +25,17 @@ internal sealed class RetryingTraceExporter : ITraceExporter
         _onRetry = onRetry;
     }
 
-    public async Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+    // Splitting/serialization isn't a transient operation, so it's delegated unchanged;
+    // only the per-frame send is retried.
+    public PreparedBatches Prepare(ExportTraceServiceRequest request) => _inner.Prepare(request);
+
+    public async Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                return await _inner.ExportAsync(request, cancellationToken).ConfigureAwait(false);
+                return await _inner.SendAsync(frame, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

@@ -35,6 +35,14 @@ public class PartialSuccessTests
         return new ExporterFactory().Create(config);
     }
 
+    // No size limit configured, so the batch prepares to a single frame; send it and return
+    // the outcome.
+    static async Task<ExportOutcome> ExportAsync(ITraceExporter exporter, ExportTraceServiceRequest request)
+    {
+        var prepared = exporter.Prepare(request);
+        return await exporter.SendAsync(prepared.Frames.Single(), CancellationToken.None);
+    }
+
     [Theory]
     [InlineData("http")]
     [InlineData("grpc")]
@@ -45,7 +53,7 @@ public class PartialSuccessTests
         var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
 
         await using var exporter = CreateExporter(endpoint, protocol == "grpc" ? OtlpProtocol.Grpc : OtlpProtocol.Http);
-        var outcome = await exporter.ExportAsync(request, CancellationToken.None);
+        var outcome = await ExportAsync(exporter, request);
 
         Assert.True(outcome.HasProblem);
         Assert.Equal(spanCount, outcome.RejectedSpans);
@@ -62,7 +70,7 @@ public class PartialSuccessTests
         var endpoint = protocol == "grpc" ? server.GrpcEndpoint : server.HttpEndpoint;
 
         await using var exporter = CreateExporter(endpoint, protocol == "grpc" ? OtlpProtocol.Grpc : OtlpProtocol.Http);
-        var outcome = await exporter.ExportAsync(request, CancellationToken.None);
+        var outcome = await ExportAsync(exporter, request);
 
         Assert.False(outcome.HasProblem);
         Assert.Equal(0, outcome.RejectedSpans);
