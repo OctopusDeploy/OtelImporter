@@ -74,7 +74,12 @@ internal static class Importer
         if (options.MaxBatchesPerSecond is { } rate)
             Console.WriteLine($"  rate limit: {rate:G} batches/sec");
         Console.WriteLine($"  retries: up to {retryOptions.MaxAttempts - 1} per batch on transient failures");
+        if (options.MaxBatchSizeKb is { } maxBatchKb)
+            Console.WriteLine($"  max batch size: {maxBatchKb} KB (larger batches are split by span)");
         PrintTimeWindow(Console.Out, options);
+
+        // KB on the command line, bytes for measuring; null means no splitting.
+        long? maxBatchBytes = options.MaxBatchSizeKb is { } kb ? kb * 1024L : null;
 
         using var cancellation = new ConsoleCancellation();
 
@@ -131,6 +136,7 @@ internal static class Importer
         {
             var batchCount = 0L;
             var rejectedSpanCount = 0L;
+            var skippedSpanCount = 0L;
             var failedFiles = new List<string>();
             var consecutiveFailures = 0;
             var aborted = false;
@@ -140,7 +146,7 @@ internal static class Importer
                 var enricher = SpanEnricher.Create(
                     options.NoLogFileName ? null : Path.GetFileName(inputFile),
                     options.Attributes);
-                var runner = new ImportRunner(inputStreamFactory, exporter, rateLimiter, enricher, filter);
+                var runner = new ImportRunner(inputStreamFactory, exporter, rateLimiter, enricher, filter, maxBatchBytes);
 
                 try
                 {
@@ -148,6 +154,7 @@ internal static class Importer
                         inputFile, progress, ReportDiagnostic, inspector, cancellation.Token, batchCount);
                     batchCount = result.BatchCount;
                     rejectedSpanCount += result.RejectedSpanCount;
+                    skippedSpanCount += result.SkippedSpanCount;
                     consecutiveFailures = 0;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !cancellation.Token.IsCancellationRequested)
@@ -181,6 +188,11 @@ internal static class Importer
                     $"WARNING: the collector rejected {rejectedSpanCount} span(s). " +
                     "They were accepted at the transport level but not stored upstream (see warnings above).");
 
+            if (skippedSpanCount > 0)
+                Console.Error.WriteLine(
+                    $"WARNING: skipped {skippedSpanCount} span(s) larger than the {options.MaxBatchSizeKb} KB " +
+                    "max batch size; they could not be split small enough and were not sent.");
+
             if (failedFiles.Count > 0)
             {
                 // List the specific files that failed -- only the failures, so the output
@@ -198,7 +210,8 @@ internal static class Importer
                     : ExitCode.PartialSuccess;
             }
 
-            return rejectedSpanCount > 0 ? ExitCode.PartialSuccess : ExitCode.Success;
+            // Rejected or skipped spans mean not everything landed upstream -> partial success.
+            return rejectedSpanCount > 0 || skippedSpanCount > 0 ? ExitCode.PartialSuccess : ExitCode.Success;
         }
         catch (OperationCanceledException) when (cancellation.Token.IsCancellationRequested)
         {
@@ -223,7 +236,13 @@ internal static class Importer
     static async Task<int> RunInspectAsync(IReadOnlyList<string> inputFiles, CommandLineOptions options, SpanTimeFilter? filter)
     {
         DescribeInputs("Inspecting", inputFiles, " (read-only, nothing will be exported)");
+        // --max-batch-size doesn't change what's read, only how many batches an export would
+        // send, so inspect reports that count rather than ignoring the option outright.
+        if (options.MaxBatchSizeKb is { } maxBatchKb)
+            Console.WriteLine($"  max batch size: {maxBatchKb} KB (batch count reflects splitting; export adds attributes, so the real count may be higher)");
         PrintTimeWindow(Console.Out, options);
+
+        long? maxBatchBytes = options.MaxBatchSizeKb is { } kb ? kb * 1024L : null;
 
         using var cancellation = new ConsoleCancellation();
 
@@ -237,9 +256,10 @@ internal static class Importer
         try
         {
             // One inspector and a running batch count fold every file into a single summary.
-            var runner = new InspectRunner(new InputStreamFactory(), filter);
+            var runner = new InspectRunner(new InputStreamFactory(), filter, maxBatchBytes);
             var inspector = new TraceInspector();
             var batchCount = 0L;
+            var skippedSpanCount = 0L;
             var failedFiles = new List<string>();
             var consecutiveFailures = 0;
             var aborted = false;
@@ -247,7 +267,9 @@ internal static class Importer
             {
                 try
                 {
-                    batchCount = await runner.RunAsync(inputFile, inspector, progress, batchCount, cancellation.Token);
+                    var result = await runner.RunAsync(inputFile, inspector, progress, batchCount, cancellation.Token);
+                    batchCount = result.BatchCount;
+                    skippedSpanCount += result.SkippedSpanCount;
                     consecutiveFailures = 0;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !cancellation.Token.IsCancellationRequested)
@@ -270,6 +292,12 @@ internal static class Importer
             Console.Write("\r");
             Console.WriteLine($"Done. Read {batchCount} batches in {stopwatch.Elapsed.TotalSeconds:F1}s.");
             PrintSummary(inspector.BuildSummary(batchCount));
+
+            // Informational only: inspect sends nothing, so this is what an export would do.
+            if (skippedSpanCount > 0)
+                Console.WriteLine(
+                    $"Note: {skippedSpanCount} span(s) exceed the {options.MaxBatchSizeKb} KB max batch size " +
+                    "and would be skipped on export.");
 
             if (failedFiles.Count > 0)
             {
@@ -370,12 +398,12 @@ internal static class Importer
         writer.WriteLine();
         writer.WriteLine("Usage:");
         writer.WriteLine("  OtelImporter <input> [--endpoint <url>] [--protocol <grpc|http>]");
-        writer.WriteLine("               [--max-rate <batches/sec>] [--max-retries <count>]");
+        writer.WriteLine("               [--max-rate <batches/sec>] [--max-retries <count>] [--max-batch-size <kb>]");
         writer.WriteLine("  OtelImporter <input> --inspect");
         writer.WriteLine();
         writer.WriteLine("Arguments:");
-        writer.WriteLine("  <input>                 Path to a .jsonl or .jsonl.zst OTLP trace file, or a");
-        writer.WriteLine("                          directory; every .jsonl/.jsonl.zst file directly inside");
+        writer.WriteLine("  <input>                 Path to a .jsonl, .jsonl.zst or .json OTLP trace file, or a");
+        writer.WriteLine("                          directory; every .jsonl/.jsonl.zst/.json file directly inside");
         writer.WriteLine("                          it is processed in name order.");
         writer.WriteLine();
         writer.WriteLine("Options:");
@@ -383,6 +411,9 @@ internal static class Importer
         writer.WriteLine("  -p, --protocol <value>  'grpc' or 'http'. Overrides protocol sniffed from the port.");
         writer.WriteLine("  -r, --max-rate <n>      Throttle to at most n batches per second (default: unlimited).");
         writer.WriteLine("      --max-retries <n>   Retries per batch on transient failures (default: 4, 0 disables).");
+        writer.WriteLine("      --max-batch-size <kb>  Split batches larger than this many KB into smaller ones");
+        writer.WriteLine("                          (by span; default: no splitting). With --inspect, the batch");
+        writer.WriteLine("                          count reflects splitting but nothing is sent.");
         writer.WriteLine("  -i, --inspect           Read-only: summarise the file instead of exporting.");
         writer.WriteLine("                          Export options (endpoint, rate, retries) are ignored.");
         writer.WriteLine("      --no-inspect        Export without printing the end-of-run summary.");

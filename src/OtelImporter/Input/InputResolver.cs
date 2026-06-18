@@ -10,13 +10,13 @@ internal sealed record InputResolution(IReadOnlyList<string> Files, string? Erro
 //
 //   * a path to a regular file yields just that file (any extension -- the stream
 //     factory sniffs the actual format, so an explicitly named file is always honoured);
-//   * a path to a directory yields every *.jsonl / *.jsonl.zst file directly inside it,
-//     sorted by name for deterministic ordering. Subdirectories are not searched.
+//   * a path to a directory yields every *.jsonl / *.jsonl.zst / *.json file directly
+//     inside it, sorted by name for deterministic ordering. Subdirectories are not searched.
 //
 // A missing path, or a directory with no matching files, is reported as an error.
 internal static class InputResolver
 {
-    static readonly string[] TracePatterns = ["*.jsonl", "*.jsonl.zst"];
+    static readonly string[] TracePatterns = ["*.jsonl", "*.jsonl.zst", "*.json"];
 
     public static InputResolution Resolve(string path)
     {
@@ -34,7 +34,7 @@ internal static class InputResolver
                 .ToList();
 
             if (files.Count == 0)
-                return InputResolution.Failed($"no .jsonl or .jsonl.zst files found in directory: {path}");
+                return InputResolution.Failed($"no .jsonl, .jsonl.zst or .json files found in directory: {path}");
 
             return InputResolution.Resolved(files);
         }

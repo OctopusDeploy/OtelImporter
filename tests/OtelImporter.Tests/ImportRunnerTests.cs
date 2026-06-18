@@ -15,6 +15,10 @@ public class ImportRunnerTests
 
     static string Lines(params string[] batches) => string.Join('\n', batches) + '\n';
 
+    // One batch (one line) whose single scope carries a span per name, for split tests.
+    static string BatchOf(params string[] spanNames) =>
+        $$"""{"resourceSpans":[{"scopeSpans":[{"spans":[{{string.Join(",", spanNames.Select(n => $$"""{"name":"{{n}}"}"""))}}]}]}]}""";
+
     [Fact]
     public async Task ExportsEachNonEmptyLineAndCountsBatches()
     {
@@ -139,6 +143,37 @@ public class ImportRunnerTests
         Assert.Equal(new SpanNameCount("a", 2), summary.TopSpanNames[0]);
     }
 
+    [Fact]
+    public async Task SplitsAnOversizedBatchAcrossMultipleExports()
+    {
+        // Six padded spans (~240 bytes each once re-serialised); an 800-byte cap fits a
+        // couple per batch, so the single input batch must be split into several.
+        var pad = new string('x', 200);
+        var input = new StubInputStreamFactory(BatchOf(pad + "a", pad + "b", pad + "c", pad + "d", pad + "e", pad + "f") + "\n");
+        var exporter = new SpanCollectingExporter();
+
+        var result = await new ImportRunner(input, exporter, maxBatchBytes: 800).RunAsync("ignored");
+
+        Assert.True(result.BatchCount > 1, $"expected a split, got {result.BatchCount} batch(es)");
+        Assert.Equal(0, result.SkippedSpanCount);
+        // Every span survives the split, in order, across the multiple exports.
+        Assert.Equal([pad + "a", pad + "b", pad + "c", pad + "d", pad + "e", pad + "f"], exporter.AllSpanNames);
+    }
+
+    [Fact]
+    public async Task SkipsSpansLargerThanTheMaxBatchSizeButSendsTheRest()
+    {
+        // The middle span alone exceeds the cap; the small ones still go.
+        var huge = new string('x', 500);
+        var input = new StubInputStreamFactory(BatchOf("a", huge, "b") + "\n");
+        var exporter = new SpanCollectingExporter();
+
+        var result = await new ImportRunner(input, exporter, maxBatchBytes: 300).RunAsync("ignored");
+
+        Assert.Equal(1, result.SkippedSpanCount);
+        Assert.Equal(["a", "b"], exporter.AllSpanNames);
+    }
+
     // Deterministic, synchronous progress sink (Progress<T> dispatches asynchronously).
     sealed class SynchronousProgress : IProgress<long>
     {
@@ -162,6 +197,24 @@ public class ImportRunnerTests
             var name = request.ResourceSpans?[0].ScopeSpans?[0].Spans?[0].Name ?? "";
             SpanNames.Add(name);
             return Task.FromResult(_outcome(name));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    // Records the names of every span across every exported batch, so split output can be
+    // checked end to end (RecordingExporter only keeps each batch's first span).
+    sealed class SpanCollectingExporter : ITraceExporter
+    {
+        public List<string> AllSpanNames { get; } = [];
+
+        public Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+        {
+            foreach (var rs in request.ResourceSpans ?? [])
+                foreach (var ss in rs.ScopeSpans ?? [])
+                    foreach (var s in ss.Spans ?? [])
+                        AllSpanNames.Add(s.Name ?? "");
+            return Task.FromResult(ExportOutcome.Accepted);
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

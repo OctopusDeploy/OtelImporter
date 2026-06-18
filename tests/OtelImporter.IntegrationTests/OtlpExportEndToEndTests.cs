@@ -381,4 +381,37 @@ public class OtlpExportEndToEndTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task SplitsLargeBatchesFromAJsonFileAcrossRequests()
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+
+        var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
+        try
+        {
+            // A single .json batch of 20 spans (~3 KB once serialised); a 2 KB cap forces it
+            // to be sent as several requests. Also exercises .json input acceptance end to end.
+            var spans = string.Join(",", Enumerable.Range(0, 20).Select(i => $$"""{"name":"span-{{i}}"}"""));
+            var batch = $$"""{"resourceSpans":[{"scopeSpans":[{"spans":[{{spans}}]}]}]}""";
+            File.WriteAllText(Path.Combine(dir, "traces.json"), batch + "\n");
+
+            var exitCode = await Importer.RunAsync(
+            [
+                Path.Combine(dir, "traces.json"),
+                "--endpoint", server.HttpEndpoint.ToString(),
+                "--protocol", "http",
+                "--max-batch-size", "2",
+            ]);
+
+            Assert.Equal(ExitCode.Success, exitCode);
+            // More requests than the single input batch == it was split, and no span was lost.
+            Assert.True(server.Received.RequestCount > 1, $"expected splitting, got {server.Received.RequestCount} request(s)");
+            Assert.Equal(20, server.Received.SpanCount);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }

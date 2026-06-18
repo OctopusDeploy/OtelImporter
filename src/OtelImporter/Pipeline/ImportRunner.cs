@@ -6,7 +6,7 @@ using OtelImporter.Otlp;
 
 namespace OtelImporter.Pipeline;
 
-internal sealed record ImportResult(long BatchCount, long RejectedSpanCount);
+internal sealed record ImportResult(long BatchCount, long RejectedSpanCount, long SkippedSpanCount);
 
 // Drives the import: open the (optionally compressed) input stream, read it line by
 // line, deserialize each OTLP/JSON batch once, and hand the model to the exporter
@@ -19,19 +19,22 @@ internal sealed class ImportRunner
     readonly IRateLimiter? _rateLimiter;
     readonly SpanEnricher? _enricher;
     readonly SpanTimeFilter? _filter;
+    readonly long? _maxBatchBytes;
 
     public ImportRunner(
         IInputStreamFactory inputStreamFactory,
         ITraceExporter exporter,
         IRateLimiter? rateLimiter = null,
         SpanEnricher? enricher = null,
-        SpanTimeFilter? filter = null)
+        SpanTimeFilter? filter = null,
+        long? maxBatchBytes = null)
     {
         _inputStreamFactory = inputStreamFactory;
         _exporter = exporter;
         _rateLimiter = rateLimiter;
         _enricher = enricher;
         _filter = filter;
+        _maxBatchBytes = maxBatchBytes;
     }
 
     // startingBatchCount lets a caller chain several files through one exporter: the
@@ -50,6 +53,27 @@ internal sealed class ImportRunner
 
         var batchCount = startingBatchCount;
         var rejectedSpanCount = 0L;
+        var skippedSpanCount = 0L;
+
+        // Sends one batch and folds its outcome into the running totals/progress; shared by
+        // the plain path and the split path so numbering and diagnostics behave identically.
+        async Task ExportOneAsync(ExportTraceServiceRequest batch)
+        {
+            if (_rateLimiter is not null)
+                await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            var outcome = await _exporter.ExportAsync(batch, cancellationToken).ConfigureAwait(false);
+            batchCount++;
+
+            if (outcome.HasProblem)
+            {
+                rejectedSpanCount += outcome.RejectedSpans;
+                onDiagnostic?.Invoke(FormatProblem(batchCount, outcome));
+            }
+
+            progress?.Report(batchCount);
+        }
+
         await foreach (var line in JsonlLineReader.ReadLinesAsync(stream, cancellationToken).ConfigureAwait(false))
         {
             var request = JsonSerializer.Deserialize(line.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
@@ -68,22 +92,23 @@ internal sealed class ImportRunner
             inspector?.Add(request);
             _enricher?.Enrich(request);
 
-            if (_rateLimiter is not null)
-                await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
-
-            var outcome = await _exporter.ExportAsync(request, cancellationToken).ConfigureAwait(false);
-            batchCount++;
-
-            if (outcome.HasProblem)
+            // With a size cap, an oversized batch is broken into several that each fit;
+            // otherwise the whole batch goes as one. Splitting runs after enrichment so the
+            // measured size matches what is actually sent.
+            if (_maxBatchBytes is { } maxBytes)
             {
-                rejectedSpanCount += outcome.RejectedSpans;
-                onDiagnostic?.Invoke(FormatProblem(batchCount, outcome));
+                var split = BatchSplitter.Split(request, maxBytes);
+                skippedSpanCount += split.SkippedSpanCount;
+                foreach (var batch in split.Batches)
+                    await ExportOneAsync(batch).ConfigureAwait(false);
             }
-
-            progress?.Report(batchCount);
+            else
+            {
+                await ExportOneAsync(request).ConfigureAwait(false);
+            }
         }
 
-        return new ImportResult(batchCount, rejectedSpanCount);
+        return new ImportResult(batchCount, rejectedSpanCount, skippedSpanCount);
     }
 
     static string FormatProblem(long batchNumber, ExportOutcome outcome)

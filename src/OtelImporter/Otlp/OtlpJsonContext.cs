@@ -13,6 +13,7 @@ namespace OtelImporter.Otlp;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(ExportTraceServiceRequest))]
 [JsonSerializable(typeof(ExportTraceServiceResponse))]
+[JsonSerializable(typeof(Span))] // serialized in isolation when measuring batch-split sizes
 internal partial class OtlpJsonContext : JsonSerializerContext
 {
 }

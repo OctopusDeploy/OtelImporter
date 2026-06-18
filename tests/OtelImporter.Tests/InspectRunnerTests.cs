@@ -18,8 +18,8 @@ public class InspectRunnerTests
         var runner = new InspectRunner(new StubInputStreamFactory(SampleJsonl));
         var inspector = new TraceInspector();
 
-        var batchCount = await runner.RunAsync("ignored", inspector);
-        var summary = inspector.BuildSummary(batchCount);
+        var result = await runner.RunAsync("ignored", inspector);
+        var summary = inspector.BuildSummary(result.BatchCount);
 
         Assert.Equal(2, summary.BatchCount);
         Assert.Equal(3, summary.SpanCount);
@@ -49,8 +49,8 @@ public class InspectRunnerTests
         var runner = new InspectRunner(new StubInputStreamFactory(SampleJsonl), filter);
         var inspector = new TraceInspector();
 
-        var batchCount = await runner.RunAsync("ignored", inspector);
-        var summary = inspector.BuildSummary(batchCount);
+        var result = await runner.RunAsync("ignored", inspector);
+        var summary = inspector.BuildSummary(result.BatchCount);
 
         Assert.Equal(2, summary.BatchCount);
         Assert.Equal(2, summary.SpanCount);
@@ -66,8 +66,8 @@ public class InspectRunnerTests
         var runner = new InspectRunner(new StubInputStreamFactory(SampleJsonl), filter);
         var inspector = new TraceInspector();
 
-        var batchCount = await runner.RunAsync("ignored", inspector);
-        var summary = inspector.BuildSummary(batchCount);
+        var result = await runner.RunAsync("ignored", inspector);
+        var summary = inspector.BuildSummary(result.BatchCount);
 
         Assert.Equal(0, summary.BatchCount);
         Assert.Equal(0, summary.SpanCount);
@@ -81,13 +81,31 @@ public class InspectRunnerTests
         var runner = new InspectRunner(new StubInputStreamFactory(SampleJsonl));
 
         // Two "files" of the same sample (2 batches / 3 spans each), numbering chained.
-        var firstCount = await runner.RunAsync("f1", inspector);
-        var secondCount = await runner.RunAsync("f2", inspector, startingBatchCount: firstCount);
-        var summary = inspector.BuildSummary(secondCount);
+        var first = await runner.RunAsync("f1", inspector);
+        var second = await runner.RunAsync("f2", inspector, startingBatchCount: first.BatchCount);
+        var summary = inspector.BuildSummary(second.BatchCount);
 
-        Assert.Equal(4, secondCount);
+        Assert.Equal(4, second.BatchCount);
         Assert.Equal(6, summary.SpanCount);
         Assert.Equal(new SpanNameCount("GET", 4), summary.TopSpanNames[0]);
+    }
+
+    [Fact]
+    public async Task CountsSplitBatchesButKeepsTheTrueSpanCount()
+    {
+        // One line with three padded spans; a small cap makes an export send several batches,
+        // while the summary still reports the real span count.
+        var pad = new string('x', 200);
+        var line = $$"""{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"{{pad}}1"},{"name":"{{pad}}2"},{"name":"{{pad}}3"}]}]}]}""" + "\n";
+        var inspector = new TraceInspector();
+        var runner = new InspectRunner(new StubInputStreamFactory(line), maxBatchBytes: 400);
+
+        var result = await runner.RunAsync("ignored", inspector);
+        var summary = inspector.BuildSummary(result.BatchCount);
+
+        Assert.True(result.BatchCount > 1, $"expected the batch to be counted as split, got {result.BatchCount}");
+        Assert.Equal(0, result.SkippedSpanCount);
+        Assert.Equal(3, summary.SpanCount); // the file's true span count, regardless of splitting
     }
 
     sealed class SynchronousProgress : IProgress<long>

@@ -1,8 +1,8 @@
 # OtelImporter
 
 A small, AOT-compiled .NET 10 console app that streams OpenTelemetry trace files
-(`*.jsonl` / `*.jsonl.zst`) to an upstream OTLP endpoint (e.g. an OpenTelemetry
-Collector) over **HTTP** or **gRPC**.
+(`*.jsonl` / `*.jsonl.zst` / `*.json`) to an upstream OTLP endpoint (e.g. an OpenTelemetry
+Collector) over **HTTP** or **gRPC**. Each line of the input is one OTLP batch.
 
 ## Usage / Examples
 
@@ -17,8 +17,8 @@ If you are sending data directly to jaeger or signoz, you may not need `--max-ra
 
 ### Upload a whole directory of trace files
 
-Point the importer at a directory and it processes every `.jsonl` / `.jsonl.zst` file
-directly inside it (in name order), through the one connection. Subdirectories are not
+Point the importer at a directory and it processes every `.jsonl` / `.jsonl.zst` / `.json`
+file directly inside it (in name order), through the one connection. Subdirectories are not
 searched. The end-of-run summary covers all files combined, and each file's spans get a
 `log.file.name` attribute set to that file's name.
 
@@ -30,6 +30,20 @@ upstream is down rather than a few bad files — the run stops early and exits w
 ```bash
 OtelImporter ./traces --endpoint http://localhost:4318 --max-rate 10
 ```
+
+### Split oversized batches
+
+Some upstreams reject batches over a size limit (for example gRPC's default 4 MB message
+limit). Pass `--max-batch-size <kb>` and any batch larger than that is broken into several
+smaller batches — split by span, preserving each span's resource/scope — before sending.
+Size is measured as OTLP/JSON. A single span that on its own exceeds the limit can't be
+split, so it is skipped (with a warning) and the run finishes with exit code `3`.
+
+```bash
+OtelImporter ./traces.json --endpoint http://localhost:4318 --max-batch-size 512
+```
+
+(`--max-batch-size` only affects exporting; it is ignored by `--inspect`.)
 
 ### Upload a trace file to Honeycomb
 
@@ -50,11 +64,12 @@ OtelImporter traces-1776.jsonl.zst --inspect
 
 | Argument / Option        | Description                                                        |
 | ------------------------ | ----------------------------------------------------------------- |
-| `<input>`                | Path to a `.jsonl`/`.jsonl.zst` trace file, or a directory of them (positional). |
+| `<input>`                | Path to a `.jsonl`/`.jsonl.zst`/`.json` trace file, or a directory of them (positional). |
 | `-e`, `--endpoint <url>` | Upstream OTLP endpoint. Overrides the environment variables.       |
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
 | `--max-retries <n>`      | Retries per batch on transient failures (default: 4, `0` disables).|
+| `--max-batch-size <kb>`  | Split batches larger than `n` KB into smaller ones (default: off). Ignored by `--inspect`. |
 | `-i`, `--inspect`        | Read-only: summarise the file instead of exporting (see below).    |
 | `--no-inspect`           | Export without printing the end-of-run summary.                    |
 | `-a`, `--attribute k=v`  | Add an attribute to every exported span. Repeatable.              |
