@@ -2,7 +2,7 @@
 
 A small, AOT-compiled .NET 10 console app that streams OpenTelemetry trace files
 (`*.jsonl` / `*.jsonl.zst` / `*.json`) to an upstream OTLP endpoint (e.g. an OpenTelemetry
-Collector) over **HTTP** or **gRPC**. Each line of the input is one OTLP batch.
+Collector) over **HTTP** or **gRPC**.
 
 ## Usage / Examples
 
@@ -43,7 +43,9 @@ split, so it is skipped (with a warning) and the run finishes with exit code `3`
 OtelImporter ./traces.json --endpoint http://localhost:4318 --max-batch-size 512
 ```
 
-(`--max-batch-size` only affects exporting; it is ignored by `--inspect`.)
+With `--inspect`, nothing is sent, but the option is still honoured for reporting: the
+batch count reflects how many batches an export would split into, and spans that would be
+skipped are left out of the summary (and called out in a note).
 
 ### Upload a trace file to Honeycomb
 
@@ -69,7 +71,7 @@ OtelImporter traces-1776.jsonl.zst --inspect
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
 | `--max-retries <n>`      | Retries per batch on transient failures (default: 4, `0` disables).|
-| `--max-batch-size <kb>`  | Split batches larger than `n` KB into smaller ones (default: off). Ignored by `--inspect`. |
+| `--max-batch-size <kb>`  | Split batches larger than `n` KB into smaller ones (default: off). With `--inspect`, the reported batch count reflects splitting but nothing is sent. |
 | `-i`, `--inspect`        | Read-only: summarise the file instead of exporting (see below).    |
 | `--no-inspect`           | Export without printing the end-of-run summary.                    |
 | `-a`, `--attribute k=v`  | Add an attribute to every exported span. Repeatable.              |
