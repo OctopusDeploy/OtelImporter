@@ -387,8 +387,8 @@ internal static class Importer
         writer.WriteLine("  OtelImporter <input> --inspect");
         writer.WriteLine();
         writer.WriteLine("Arguments:");
-        writer.WriteLine("  <input>                 Path to a .jsonl, .jsonl.zst or .json OTLP trace file, or a");
-        writer.WriteLine("                          directory; every .jsonl/.jsonl.zst/.json file directly inside");
+        writer.WriteLine("  <input>                 Path to a .jsonl or .jsonl.zst OTLP trace file, or a");
+        writer.WriteLine("                          directory; every .jsonl/.jsonl.zst file directly inside");
         writer.WriteLine("                          it is processed in name order.");
         writer.WriteLine();
         writer.WriteLine("Options:");

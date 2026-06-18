@@ -1,7 +1,7 @@
 # OtelImporter
 
 A small, AOT-compiled .NET 10 console app that streams OpenTelemetry trace files
-(`*.jsonl` / `*.jsonl.zst` / `*.json`) to an upstream OTLP endpoint (e.g. an OpenTelemetry
+(`*.jsonl` / `*.jsonl.zst`) to an upstream OTLP endpoint (e.g. an OpenTelemetry
 Collector) over **HTTP** or **gRPC**.
 
 ## Usage / Examples
@@ -17,7 +17,7 @@ If you are sending data directly to jaeger or signoz, you may not need `--max-ra
 
 ### Upload a whole directory of trace files
 
-Point the importer at a directory and it processes every `.jsonl` / `.jsonl.zst` / `.json`
+Point the importer at a directory and it processes every `.jsonl` / `.jsonl.zst`
 file directly inside it (in name order), through the one connection. Subdirectories are not
 searched. The end-of-run summary covers all files combined, and each file's spans get a
 `log.file.name` attribute set to that file's name.
@@ -42,7 +42,7 @@ gRPC. A single span that on its own exceeds the limit can't be split, so it is s
 (with a warning) and the run finishes with exit code `3`.
 
 ```bash
-OtelImporter ./traces.json --endpoint http://localhost:4318 --max-batch-size 512
+OtelImporter traces-1776.jsonl.zst --endpoint http://localhost:4318 --max-batch-size 512
 ```
 
 `--max-batch-size` only affects exporting; `--inspect` ignores it (each input line counts
@@ -67,7 +67,7 @@ OtelImporter traces-1776.jsonl.zst --inspect
 
 | Argument / Option        | Description                                                        |
 | ------------------------ | ----------------------------------------------------------------- |
-| `<input>`                | Path to a `.jsonl`/`.jsonl.zst`/`.json` trace file, or a directory of them (positional). |
+| `<input>`                | Path to a `.jsonl`/`.jsonl.zst` trace file, or a directory of them (positional). |
 | `-e`, `--endpoint <url>` | Upstream OTLP endpoint. Overrides the environment variables.       |
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
