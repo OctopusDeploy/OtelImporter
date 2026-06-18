@@ -17,9 +17,10 @@ internal sealed record InspectRunResult(long BatchCount, long SkippedSpanCount);
 // out-of-window spans so the summary matches what an export with the same window would.
 //
 // When a max batch size is set, BatchCount reflects how many batches an export would send
-// (oversized batches counted as if split); the span counts still describe the whole file,
-// since splitting only regroups spans. The size is measured without enrichment, so the real
-// export may split into slightly more batches once log.file.name/attributes are added.
+// (oversized batches counted as if split) and the span counts cover only what would be sent
+// -- spans too large to fit any batch are excluded, as on export. The size is measured without
+// enrichment, so the real export may split into slightly more batches once
+// log.file.name/attributes are added.
 internal sealed class InspectRunner
 {
     readonly IInputStreamFactory _inputStreamFactory;
@@ -61,20 +62,21 @@ internal sealed class InspectRunner
                     continue; // entire batch outside the window
             }
 
-            // The summary always describes the whole file, so every span is counted here
-            // regardless of splitting.
-            inspector.Add(request);
-
-            // With a size cap, count the batches an export would actually send; otherwise
-            // each line is one batch.
+            // With a size cap, count the batches an export would send and summarise only the
+            // spans those batches carry, so spans too large to fit any batch are excluded from
+            // the summary (matching the export path). Without a cap, each line is one batch and
+            // every span is counted.
             if (_maxBatchBytes is { } maxBytes)
             {
                 var split = BatchSplitter.Split(request, maxBytes);
+                foreach (var batch in split.Batches)
+                    inspector.Add(batch);
                 batchCount += split.Batches.Count;
                 skippedSpanCount += split.SkippedSpanCount;
             }
             else
             {
+                inspector.Add(request);
                 batchCount++;
             }
 

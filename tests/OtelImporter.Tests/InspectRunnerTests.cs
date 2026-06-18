@@ -105,7 +105,23 @@ public class InspectRunnerTests
 
         Assert.True(result.BatchCount > 1, $"expected the batch to be counted as split, got {result.BatchCount}");
         Assert.Equal(0, result.SkippedSpanCount);
-        Assert.Equal(3, summary.SpanCount); // the file's true span count, regardless of splitting
+        Assert.Equal(3, summary.SpanCount); // nothing skipped here, so all three spans count
+    }
+
+    [Fact]
+    public async Task SummaryExcludesSpansThatWouldBeSkipped()
+    {
+        // "a", an oversized span, "b" in one scope at a tiny cap: the oversized span can't fit
+        // any batch, so it would be skipped on export and is left out of the summary count.
+        var huge = new string('x', 500);
+        var line = $$"""{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"a"},{"name":"{{huge}}"},{"name":"b"}]}]}]}""" + "\n";
+        var inspector = new TraceInspector();
+        var runner = new InspectRunner(new StubInputStreamFactory(line), maxBatchBytes: 300);
+
+        var result = await runner.RunAsync("ignored", inspector);
+
+        Assert.Equal(1, result.SkippedSpanCount);
+        Assert.Equal(2, inspector.BuildSummary(result.BatchCount).SpanCount); // only a and b
     }
 
     sealed class SynchronousProgress : IProgress<long>

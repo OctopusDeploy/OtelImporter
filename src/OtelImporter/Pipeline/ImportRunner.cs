@@ -88,22 +88,27 @@ internal sealed class ImportRunner
                     continue;
             }
 
-            // The inspector reflects what survived the filter; enrichment is export-only.
-            inspector?.Add(request);
+            // Enrichment is export-only; it only adds attributes, so it doesn't affect what
+            // the inspector measures (span counts, names, timestamps).
             _enricher?.Enrich(request);
 
             // With a size cap, an oversized batch is broken into several that each fit;
             // otherwise the whole batch goes as one. Splitting runs after enrichment so the
-            // measured size matches what is actually sent.
+            // measured size matches what is actually sent. The inspector is fed the batches we
+            // actually send, so the summary excludes any spans skipped for being too large.
             if (_maxBatchBytes is { } maxBytes)
             {
                 var split = BatchSplitter.Split(request, maxBytes);
                 skippedSpanCount += split.SkippedSpanCount;
                 foreach (var batch in split.Batches)
+                {
+                    inspector?.Add(batch);
                     await ExportOneAsync(batch).ConfigureAwait(false);
+                }
             }
             else
             {
+                inspector?.Add(request);
                 await ExportOneAsync(request).ConfigureAwait(false);
             }
         }

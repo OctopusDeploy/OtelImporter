@@ -174,6 +174,22 @@ public class ImportRunnerTests
         Assert.Equal(["a", "b"], exporter.AllSpanNames);
     }
 
+    [Fact]
+    public async Task SummaryExcludesSkippedSpans()
+    {
+        // "a", an oversized span, then "b" in one scope; the oversized span is skipped, so the
+        // inspector (and thus the end-of-run summary) should count only the two that were sent.
+        var huge = new string('x', 500);
+        var input = new StubInputStreamFactory(BatchOf("a", huge, "b") + "\n");
+        var inspector = new TraceInspector();
+
+        var result = await new ImportRunner(input, new SpanCollectingExporter(), maxBatchBytes: 300)
+            .RunAsync("ignored", inspector: inspector);
+
+        Assert.Equal(1, result.SkippedSpanCount);
+        Assert.Equal(2, inspector.BuildSummary(result.BatchCount).SpanCount);
+    }
+
     // Deterministic, synchronous progress sink (Progress<T> dispatches asynchronously).
     sealed class SynchronousProgress : IProgress<long>
     {

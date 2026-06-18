@@ -75,6 +75,66 @@ public class BatchSplitterTests
         });
     }
 
+    // One resource carrying several named scopes, each with a few padded spans.
+    static ExportTraceServiceRequest MultiScopeRequest(string[] scopeNames, int spansPerScope, int spanPadding)
+    {
+        var pad = new string('x', spanPadding);
+        return new ExportTraceServiceRequest
+        {
+            ResourceSpans =
+            [
+                new ResourceSpans
+                {
+                    Resource = new Resource { Attributes = [new KeyValue { Key = "service.name", Value = new AnyValue { StringValue = "svc" } }] },
+                    ScopeSpans =
+                    [
+                        .. scopeNames.Select(name => new ScopeSpans
+                        {
+                            Scope = new InstrumentationScope { Name = name },
+                            Spans = [.. Enumerable.Range(0, spansPerScope).Select(i => new Span { Name = $"{pad}-{name}-{i}" })],
+                        }),
+                    ],
+                },
+            ],
+        };
+    }
+
+    [Fact]
+    public void PacksMultipleScopesIntoFewerBatches()
+    {
+        var request = MultiScopeRequest(["s0", "s1", "s2", "s3"], spansPerScope: 2, spanPadding: 80);
+
+        // Budget = the exact size of a two-scope batch, so packing should put two scopes per
+        // request -- four scopes become two batches rather than one-per-scope (four).
+        var twoScopes = new ExportTraceServiceRequest
+        {
+            ResourceSpans =
+            [
+                new ResourceSpans
+                {
+                    Resource = request.ResourceSpans![0].Resource,
+                    ScopeSpans = [.. request.ResourceSpans![0].ScopeSpans!.Take(2)],
+                },
+            ],
+        };
+        var limit = SizeOf(twoScopes);
+
+        var result = BatchSplitter.Split(request, limit);
+
+        Assert.Equal(0, result.SkippedSpanCount);
+        Assert.Equal(8, result.Batches.Sum(b => SpansOf(b).Count())); // 4 scopes * 2 spans, nothing lost
+        Assert.All(result.Batches, b => Assert.True(SizeOf(b) <= limit));
+        // Packing worked: fewer batches than scopes, and a batch holding more than one scope.
+        Assert.True(result.Batches.Count < 4, $"expected scopes to share batches, got {result.Batches.Count}");
+        Assert.Contains(result.Batches, b => b.ResourceSpans!.Sum(rs => rs.ScopeSpans!.Count) > 1);
+        // Every scope survives, with its name intact.
+        var scopeNames = result.Batches
+            .SelectMany(b => b.ResourceSpans!)
+            .SelectMany(rs => rs.ScopeSpans!)
+            .Select(ss => ss.Scope!.Name);
+        Assert.Equal(["s0", "s1", "s2", "s3"], scopeNames);
+    }
+
     [Fact]
     public void SkipsASpanThatExceedsTheLimitOnItsOwnButKeepsTheRest()
     {

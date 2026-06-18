@@ -414,4 +414,50 @@ public class OtlpExportEndToEndTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task SplitsAMultiScopeJsonBatchPackingScopesAcrossRequests()
+    {
+        await using var server = await TestOtlpServer.StartAsync();
+
+        var dir = Directory.CreateTempSubdirectory("otelimporter-e2e").FullName;
+        try
+        {
+            // One .json batch: one resource, 8 scopes, each with a single large span (~6 KB total).
+            // A 4 KB cap must split it, and several scopes should share each request (packing),
+            // so the request count lands between 1 and the scope count.
+            File.WriteAllText(Path.Combine(dir, "traces.json"), MultiScopeBatch(scopes: 8, spanPadding: 600) + "\n");
+
+            var exitCode = await Importer.RunAsync(
+            [
+                Path.Combine(dir, "traces.json"),
+                "--endpoint", server.HttpEndpoint.ToString(),
+                "--protocol", "http",
+                "--max-batch-size", "4",
+            ]);
+
+            Assert.Equal(ExitCode.Success, exitCode);
+            Assert.Equal(8, server.Received.SpanCount);                                   // every span lands
+            Assert.True(server.Received.RequestCount > 1, $"expected splitting, got {server.Received.RequestCount} request(s)");
+            // Fewer requests than scopes proves scopes were packed together, not sent one-per-scope.
+            Assert.True(server.Received.RequestCount < 8, $"expected scopes to share requests, got {server.Received.RequestCount}");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    // One OTLP batch (one JSONL line): a single resource carrying several instrumentation
+    // scopes, each with one padded span, so the batch is large and genuinely multi-scope.
+    // Built by concatenation rather than a raw string literal because the nested OTLP JSON
+    // contains "}}" runs that a $$"""...""" literal would read as interpolation.
+    static string MultiScopeBatch(int scopes, int spanPadding)
+    {
+        var pad = new string('x', spanPadding);
+        var scopeJson = string.Join(",", Enumerable.Range(0, scopes).Select(s =>
+            "{\"scope\":{\"name\":\"scope-" + s + "\"},\"spans\":[{\"name\":\"" + pad + "-s" + s + "\"}]}"));
+        return "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\","
+             + "\"value\":{\"stringValue\":\"svc\"}}]},\"scopeSpans\":[" + scopeJson + "]}]}";
+    }
 }
