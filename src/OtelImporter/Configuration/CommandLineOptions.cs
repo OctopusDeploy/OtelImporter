@@ -7,6 +7,7 @@ internal sealed record CommandLineOptions
     public OtlpProtocol? Protocol { get; init; }
     public double? MaxBatchesPerSecond { get; init; }
     public int? MaxRetries { get; init; }
+    public int? MaxBatchSizeKb { get; init; }
     public bool Inspect { get; init; }
     public bool NoInspect { get; init; }
     public bool NoLogFileName { get; init; }
@@ -30,6 +31,7 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 //   --protocol, -p <value>  grpc | http (overrides port sniffing)
 //   --max-rate, -r <value>  throttle: maximum batches per second
 //   --max-retries <count>   retries per batch on transient failures (0 disables)
+//   --max-batch-size <kb>   split batches larger than this many KB into smaller ones
 //   --inspect, -i           read-only: summarise the file instead of exporting
 //   --no-inspect            export without printing the end-of-run summary
 //   --attribute, -a k=v     add an attribute to every exported span (repeatable)
@@ -47,6 +49,7 @@ internal static class CommandLineParser
         OtlpProtocol? protocol = null;
         double? maxBatchesPerSecond = null;
         int? maxRetries = null;
+        int? maxBatchSizeKb = null;
         var inspect = false;
         var noInspect = false;
         var noLogFileName = false;
@@ -95,6 +98,14 @@ internal static class CommandLineParser
                     if (!int.TryParse(retriesValue, System.Globalization.CultureInfo.InvariantCulture, out var retries) || retries < 0)
                         return CommandLineParseResult.Failure($"Invalid value '{retriesValue}' for {arg}. Expected a non-negative integer.");
                     maxRetries = retries;
+                    break;
+
+                case "--max-batch-size":
+                    if (!TryTakeValue(args, ref i, out var batchSizeValue))
+                        return CommandLineParseResult.Failure($"Missing value for {arg}.");
+                    if (!int.TryParse(batchSizeValue, System.Globalization.CultureInfo.InvariantCulture, out var batchSize) || batchSize <= 0)
+                        return CommandLineParseResult.Failure($"Invalid value '{batchSizeValue}' for {arg}. Expected a positive number of KB.");
+                    maxBatchSizeKb = batchSize;
                     break;
 
                 case "--inspect":
@@ -173,6 +184,7 @@ internal static class CommandLineParser
             Protocol = protocol,
             MaxBatchesPerSecond = maxBatchesPerSecond,
             MaxRetries = maxRetries,
+            MaxBatchSizeKb = maxBatchSizeKb,
             Inspect = inspect,
             NoInspect = noInspect,
             NoLogFileName = noLogFileName,

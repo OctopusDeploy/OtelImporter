@@ -17,6 +17,46 @@ internal static class OtlpProtobufSerializer
         return writer.WrittenSpan.ToArray();
     }
 
+    // The following helpers serialize a single piece of the model so the size-aware batch
+    // builder can splice pre-serialized spans into freshly framed ResourceSpans/ScopeSpans
+    // without re-encoding each span for every candidate frame.
+
+    // A Span message's body (no field tag/length -- the caller frames it as scope field 2).
+    public static byte[] SerializeSpan(Span span)
+    {
+        using var writer = new ProtoWriter();
+        WriteSpan(writer, span);
+        return writer.WrittenSpan.ToArray();
+    }
+
+    // The ResourceSpans fields other than scope_spans: resource (1) and schema_url (3).
+    public static byte[] SerializeResourceSpansHeader(ResourceSpans resourceSpans)
+    {
+        using var writer = new ProtoWriter();
+        if (resourceSpans.Resource is { } resource)
+        {
+            using var nested = new ProtoWriter();
+            WriteResource(nested, resource);
+            writer.WriteLengthDelimited(1, nested.WrittenSpan);
+        }
+        writer.WriteString(3, resourceSpans.SchemaUrl);
+        return writer.WrittenSpan.ToArray();
+    }
+
+    // The ScopeSpans fields other than spans: scope (1) and schema_url (3).
+    public static byte[] SerializeScopeSpansHeader(ScopeSpans scopeSpans)
+    {
+        using var writer = new ProtoWriter();
+        if (scopeSpans.Scope is { } scope)
+        {
+            using var nested = new ProtoWriter();
+            WriteInstrumentationScope(nested, scope);
+            writer.WriteLengthDelimited(1, nested.WrittenSpan);
+        }
+        writer.WriteString(3, scopeSpans.SchemaUrl);
+        return writer.WrittenSpan.ToArray();
+    }
+
     // ExportTraceServiceRequest { repeated ResourceSpans resource_spans = 1; }
     public static void WriteExportRequest(ProtoWriter writer, ExportTraceServiceRequest request)
     {

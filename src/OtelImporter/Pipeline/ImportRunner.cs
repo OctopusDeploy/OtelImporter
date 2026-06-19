@@ -6,7 +6,7 @@ using OtelImporter.Otlp;
 
 namespace OtelImporter.Pipeline;
 
-internal sealed record ImportResult(long BatchCount, long RejectedSpanCount);
+internal sealed record ImportResult(long BatchCount, long RejectedSpanCount, long SkippedSpanCount);
 
 // Drives the import: open the (optionally compressed) input stream, read it line by
 // line, deserialize each OTLP/JSON batch once, and hand the model to the exporter
@@ -50,6 +50,8 @@ internal sealed class ImportRunner
 
         var batchCount = startingBatchCount;
         var rejectedSpanCount = 0L;
+        var skippedSpanCount = 0L;
+
         await foreach (var line in JsonlLineReader.ReadLinesAsync(stream, cancellationToken).ConfigureAwait(false))
         {
             var request = JsonSerializer.Deserialize(line.Span, OtlpJsonContext.Default.ExportTraceServiceRequest)
@@ -64,26 +66,34 @@ internal sealed class ImportRunner
                     continue;
             }
 
-            // The inspector reflects what survived the filter; enrichment is export-only.
+            // The inspector summarises the file's spans; enrichment is export-only.
             inspector?.Add(request);
             _enricher?.Enrich(request);
 
-            if (_rateLimiter is not null)
-                await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // The exporter serializes once and splits to fit the configured size if needed;
+            // each resulting frame is a separate wire request that we rate-limit and send.
+            var prepared = _exporter.Prepare(request);
+            skippedSpanCount += prepared.SkippedSpanCount;
 
-            var outcome = await _exporter.ExportAsync(request, cancellationToken).ConfigureAwait(false);
-            batchCount++;
-
-            if (outcome.HasProblem)
+            foreach (var frame in prepared.Frames)
             {
-                rejectedSpanCount += outcome.RejectedSpans;
-                onDiagnostic?.Invoke(FormatProblem(batchCount, outcome));
-            }
+                if (_rateLimiter is not null)
+                    await _rateLimiter.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-            progress?.Report(batchCount);
+                var outcome = await _exporter.SendAsync(frame, cancellationToken).ConfigureAwait(false);
+                batchCount++;
+
+                if (outcome.HasProblem)
+                {
+                    rejectedSpanCount += outcome.RejectedSpans;
+                    onDiagnostic?.Invoke(FormatProblem(batchCount, outcome));
+                }
+
+                progress?.Report(batchCount);
+            }
         }
 
-        return new ImportResult(batchCount, rejectedSpanCount);
+        return new ImportResult(batchCount, rejectedSpanCount, skippedSpanCount);
     }
 
     static string FormatProblem(long batchNumber, ExportOutcome outcome)

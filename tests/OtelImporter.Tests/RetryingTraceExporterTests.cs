@@ -8,7 +8,7 @@ namespace OtelImporter.Tests;
 public class RetryingTraceExporterTests
 {
     static readonly RetryOptions Options = new(MaxAttempts: 3, BaseDelay: TimeSpan.FromSeconds(1), MaxDelay: TimeSpan.FromSeconds(30));
-    static readonly ExportTraceServiceRequest Batch = new();
+    static readonly ReadOnlyMemory<byte> Frame = ReadOnlyMemory<byte>.Empty;
 
     // Advances the fake clock repeatedly (with yields so continuations can register
     // their next delay) until the export task settles. Over-advancing is harmless;
@@ -32,7 +32,7 @@ public class RetryingTraceExporterTests
             : ExportOutcome.Accepted);
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        var task = sut.ExportAsync(Batch, CancellationToken.None);
+        var task = sut.SendAsync(Frame, CancellationToken.None);
         await DriveAsync(task, time);
 
         Assert.False(task.IsFaulted);
@@ -46,7 +46,7 @@ public class RetryingTraceExporterTests
         var inner = new StubExporter(attempt => throw new TraceExportException($"always #{attempt}") { IsRetryable = true });
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        var task = sut.ExportAsync(Batch, CancellationToken.None);
+        var task = sut.SendAsync(Frame, CancellationToken.None);
         await DriveAsync(task, time);
 
         await Assert.ThrowsAsync<TraceExportException>(() => task);
@@ -60,7 +60,7 @@ public class RetryingTraceExporterTests
         var inner = new StubExporter(_ => throw new TraceExportException("400 bad request") { IsRetryable = false });
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        await Assert.ThrowsAsync<TraceExportException>(() => sut.ExportAsync(Batch, CancellationToken.None));
+        await Assert.ThrowsAsync<TraceExportException>(() => sut.SendAsync(Frame, CancellationToken.None));
         Assert.Equal(1, inner.Attempts);
     }
 
@@ -73,7 +73,7 @@ public class RetryingTraceExporterTests
             : ExportOutcome.Accepted);
         var sut = new RetryingTraceExporter(inner, Options, time);
 
-        var task = sut.ExportAsync(Batch, CancellationToken.None);
+        var task = sut.SendAsync(Frame, CancellationToken.None);
         await DriveAsync(task, time);
 
         await task;
@@ -89,7 +89,7 @@ public class RetryingTraceExporterTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        await Assert.ThrowsAsync<TraceExportException>(() => sut.ExportAsync(Batch, cts.Token));
+        await Assert.ThrowsAsync<TraceExportException>(() => sut.SendAsync(Frame, cts.Token));
         Assert.Equal(1, inner.Attempts);
     }
 
@@ -103,7 +103,7 @@ public class RetryingTraceExporterTests
         var sut = new RetryingTraceExporter(inner, Options, time);
 
         // The first delay timer is registered synchronously before ExportAsync yields.
-        var task = sut.ExportAsync(Batch, CancellationToken.None);
+        var task = sut.SendAsync(Frame, CancellationToken.None);
 
         time.Advance(TimeSpan.FromSeconds(9));
         await Task.Yield();
@@ -118,7 +118,11 @@ public class RetryingTraceExporterTests
     {
         public int Attempts { get; private set; }
 
-        public Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+        // Splitting isn't retried, so Prepare is irrelevant to these tests.
+        public PreparedBatches Prepare(ExportTraceServiceRequest request) =>
+            new([ReadOnlyMemory<byte>.Empty], 0);
+
+        public Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
         {
             Attempts++;
             return Task.FromResult(onCall(Attempts));

@@ -5,12 +5,12 @@ namespace OtelImporter.Export;
 
 internal interface IExporterFactory
 {
-    ITraceExporter Create(ExporterConfiguration configuration, IReadOnlyList<KeyValuePair<string, string>>? headers = null);
+    ITraceExporter Create(ExporterConfiguration configuration, IReadOnlyList<KeyValuePair<string, string>>? headers = null, long? maxBatchBytes = null);
 }
 
 internal sealed class ExporterFactory : IExporterFactory
 {
-    public ITraceExporter Create(ExporterConfiguration configuration, IReadOnlyList<KeyValuePair<string, string>>? headers = null)
+    public ITraceExporter Create(ExporterConfiguration configuration, IReadOnlyList<KeyValuePair<string, string>>? headers = null, long? maxBatchBytes = null)
     {
         if (configuration.Protocol == OtlpProtocol.Grpc)
         {
@@ -24,12 +24,12 @@ internal sealed class ExporterFactory : IExporterFactory
                 DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
             };
             ApplyHeaders(grpcClient, headers);
-            return new OtlpGrpcExporter(grpcClient, configuration.Endpoint, ownsHttpClient: true);
+            return new OtlpGrpcExporter(grpcClient, configuration.Endpoint, ownsHttpClient: true, maxBatchBytes: maxBatchBytes);
         }
 
         var httpClient = new HttpClient();
         ApplyHeaders(httpClient, headers);
-        return new OtlpHttpExporter(httpClient, configuration.Endpoint, ownsHttpClient: true);
+        return new OtlpHttpExporter(httpClient, configuration.Endpoint, ownsHttpClient: true, maxBatchBytes: maxBatchBytes);
     }
 
     // Custom headers are sent on every export request. On the HTTP/2 (gRPC) client they

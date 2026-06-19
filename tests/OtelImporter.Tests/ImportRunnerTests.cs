@@ -16,7 +16,7 @@ public class ImportRunnerTests
     static string Lines(params string[] batches) => string.Join('\n', batches) + '\n';
 
     [Fact]
-    public async Task ExportsEachNonEmptyLineAndCountsBatches()
+    public async Task SendsOneFramePerLineAndCountsBatches()
     {
         // A blank line between batches must be skipped.
         var input = new StubInputStreamFactory(Batch("a") + "\n\n" + Batch("b") + "\n" + Batch("c") + "\n");
@@ -29,7 +29,7 @@ public class ImportRunnerTests
     }
 
     [Fact]
-    public async Task ReportsProgressPerBatch()
+    public async Task ReportsProgressPerFrame()
     {
         var input = new StubInputStreamFactory(Lines(Batch("a"), Batch("b"), Batch("c")));
         var exporter = new RecordingExporter();
@@ -38,6 +38,32 @@ public class ImportRunnerTests
         await new ImportRunner(input, exporter).RunAsync("ignored", progress);
 
         Assert.Equal([1, 2, 3], progress.Reports);
+    }
+
+    [Fact]
+    public async Task SendsEveryPreparedFrameAndCountsThem()
+    {
+        // The exporter splits each batch into three frames; the runner sends them all.
+        var input = new StubInputStreamFactory(Lines(Batch("a"), Batch("b")));
+        var exporter = new FramingExporter(framesPerBatch: 3);
+        var progress = new SynchronousProgress();
+
+        var result = await new ImportRunner(input, exporter).RunAsync("ignored", progress);
+
+        Assert.Equal(6, result.BatchCount);     // 2 lines * 3 frames
+        Assert.Equal(6, exporter.SendCount);
+        Assert.Equal([1, 2, 3, 4, 5, 6], progress.Reports);
+    }
+
+    [Fact]
+    public async Task AggregatesSkippedSpansReportedByThePreparedBatches()
+    {
+        var input = new StubInputStreamFactory(Lines(Batch("a"), Batch("b")));
+        var exporter = new FramingExporter(framesPerBatch: 1, skippedPerBatch: 2);
+
+        var result = await new ImportRunner(input, exporter).RunAsync("ignored");
+
+        Assert.Equal(4, result.SkippedSpanCount); // 2 lines * 2 skipped
     }
 
     [Fact]
@@ -74,7 +100,7 @@ public class ImportRunnerTests
     }
 
     [Fact]
-    public async Task AggregatesRejectedSpansAndEmitsADiagnosticPerProblemBatch()
+    public async Task AggregatesRejectedSpansAndEmitsADiagnosticPerProblemFrame()
     {
         var input = new StubInputStreamFactory(Lines(Batch("one"), Batch("two"), Batch("three")));
         // Batches "one" and "three" report rejections; "two" is clean.
@@ -151,17 +177,42 @@ public class ImportRunnerTests
         public Stream Open(string path) => new MemoryStream(Encoding.UTF8.GetBytes(content));
     }
 
+    // Captures each batch's first span name in Prepare (one frame per batch) and replays the
+    // configured outcome for that frame from SendAsync.
     sealed class RecordingExporter(Func<string, ExportOutcome>? outcome = null) : ITraceExporter
     {
         readonly Func<string, ExportOutcome> _outcome = outcome ?? (_ => ExportOutcome.Accepted);
+        readonly Queue<ExportOutcome> _pending = new();
 
         public List<string> SpanNames { get; } = [];
 
-        public Task<ExportOutcome> ExportAsync(ExportTraceServiceRequest request, CancellationToken cancellationToken)
+        public PreparedBatches Prepare(ExportTraceServiceRequest request)
         {
             var name = request.ResourceSpans?[0].ScopeSpans?[0].Spans?[0].Name ?? "";
             SpanNames.Add(name);
-            return Task.FromResult(_outcome(name));
+            _pending.Enqueue(_outcome(name));
+            return new PreparedBatches([ReadOnlyMemory<byte>.Empty], 0);
+        }
+
+        public Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken) =>
+            Task.FromResult(_pending.Dequeue());
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    // Splits every batch into a fixed number of frames (and reports a fixed skipped count) so
+    // the runner's frame loop and aggregation can be exercised without real serialization.
+    sealed class FramingExporter(int framesPerBatch = 1, long skippedPerBatch = 0) : ITraceExporter
+    {
+        public int SendCount { get; private set; }
+
+        public PreparedBatches Prepare(ExportTraceServiceRequest request) =>
+            new([.. Enumerable.Repeat(ReadOnlyMemory<byte>.Empty, framesPerBatch)], skippedPerBatch);
+
+        public Task<ExportOutcome> SendAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
+        {
+            SendCount++;
+            return Task.FromResult(ExportOutcome.Accepted);
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

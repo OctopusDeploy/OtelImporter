@@ -52,6 +52,18 @@ public class InputResolverTests : IDisposable
     }
 
     [Fact]
+    public void ResolvesJsonFilesInADirectory()
+    {
+        var a = Touch("a.json");
+        var b = Touch("b.jsonl");
+
+        var result = InputResolver.Resolve(_dir);
+
+        Assert.Null(result.Error);
+        Assert.Equal([a, b], result.Files);
+    }
+
+    [Fact]
     public void IgnoresNonTraceFilesInADirectory()
     {
         var traces = Touch("traces.jsonl");

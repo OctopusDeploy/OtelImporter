@@ -10,6 +10,9 @@ namespace OtelImporter.Inspect;
 // TraceInspector. Nothing is exported. Like the import path, everything is streamed so
 // memory use stays flat regardless of file size. An optional time filter drops
 // out-of-window spans so the summary matches what an export with the same window would.
+//
+// Inspect is concerned only with the file's spans, not with how they would be batched on
+// the wire, so --max-batch-size has no effect here: each input line counts as one batch.
 internal sealed class InspectRunner
 {
     readonly IInputStreamFactory _inputStreamFactory;
@@ -21,10 +24,10 @@ internal sealed class InspectRunner
         _filter = filter;
     }
 
-    // The caller owns the inspector and the running batch count: this reads one file
-    // into the shared inspector and returns the new batch count. Chaining several files
-    // through the same inspector lets the caller build a single summary (once, at the
-    // end) covering the whole directory, rather than rebuilding it per file.
+    // The caller owns the inspector and the running batch count: this reads one file into the
+    // shared inspector and returns the new batch count. Chaining several files through the same
+    // inspector lets the caller build a single summary (once, at the end) covering the whole
+    // directory, rather than rebuilding it per file.
     public async Task<long> RunAsync(
         string inputFile,
         TraceInspector inspector,
