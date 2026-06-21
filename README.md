@@ -4,6 +4,12 @@ A small, AOT-compiled .NET 10 console app that streams OpenTelemetry trace files
 (`*.jsonl` / `*.jsonl.zst`) to an upstream OTLP endpoint (e.g. an OpenTelemetry
 Collector) over **HTTP** or **gRPC**.
 
+## Installation
+
+Download the latest [Release](https://github.com/OctopusDeploy/OtelImporter/releases) for your platform and unzip it.
+
+On macOS, we haven't notarized the binary so Gatekeeper will block it by default. Run `xattr -d com.apple.quarantine OtelImporter` to remove the quarantine attribute, then it should work.
+
 ## Usage / Examples
 
 ### Upload a trace file to your local Otel Collector or Jaeger/SigNoz instance
