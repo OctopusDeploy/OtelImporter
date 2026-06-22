@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: otel-replay
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: otelimporter
+          image: ghcr.io/octopusdeploy/otelimporter:latest
+          args:
+            - /traces/2024-01
+            - /traces/2024-02
+            - /traces/2024-03
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector:4318"
+            # Optional: auth header if your collector requires it
+            # - name: OTEL_EXPORTER_OTLP_HEADERS
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: otel-replay-secret
+            #       key: headers   # format: key1=value1,key2=value2
+          volumeMounts:
+            - name: traces
+              mountPath: /traces
+              readOnly: true
+      volumes:
+        - name: traces
+          persistentVolumeClaim:
+            claimName: traces-pvc
