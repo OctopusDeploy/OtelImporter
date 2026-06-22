@@ -31,23 +31,27 @@ internal static class Importer
             return ExitCode.Success;
         }
 
-        if (string.IsNullOrWhiteSpace(options.InputFile))
+        if (options.InputFiles.Count == 0)
         {
-            Console.Error.WriteLine("error: no input file specified.");
+            Console.Error.WriteLine("error: no input specified.");
             Console.Error.WriteLine();
             PrintUsage(Console.Error);
             return ExitCode.UsageError;
         }
 
-        // The positional argument may be a single file or a directory of trace files.
-        var resolution = InputResolver.Resolve(options.InputFile!);
-        if (resolution.Error is not null)
+        var allFiles = new List<string>();
+        foreach (var input in options.InputFiles)
         {
-            Console.Error.WriteLine($"error: {resolution.Error}");
-            return ExitCode.UsageError;
+            var resolution = InputResolver.Resolve(input);
+            if (resolution.Error is not null)
+            {
+                Console.Error.WriteLine($"error: {resolution.Error}");
+                return ExitCode.UsageError;
+            }
+            allFiles.AddRange(resolution.Files);
         }
 
-        var inputFiles = resolution.Files;
+        var inputFiles = allFiles.Distinct(StringComparer.Ordinal).ToList();
         var filter = SpanTimeFilter.Create(options.From, options.To);
 
         // --inspect is a read-only pass: no export, so endpoint/protocol/rate/retry are all ignored.
@@ -382,14 +386,14 @@ internal static class Importer
         writer.WriteLine("OtelImporter - stream OpenTelemetry trace files to an OTLP endpoint.");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  OtelImporter <input> [--endpoint <url>] [--protocol <grpc|http>]");
+        writer.WriteLine("  OtelImporter <input> [<input>...] [--endpoint <url>] [--protocol <grpc|http>]");
         writer.WriteLine("               [--max-rate <batches/sec>] [--max-retries <count>] [--max-batch-size <kb>]");
-        writer.WriteLine("  OtelImporter <input> --inspect");
+        writer.WriteLine("  OtelImporter <input> [<input>...] --inspect");
         writer.WriteLine();
         writer.WriteLine("Arguments:");
-        writer.WriteLine("  <input>                 Path to a .jsonl or .jsonl.zst OTLP trace file, or a");
-        writer.WriteLine("                          directory; every .jsonl/.jsonl.zst file directly inside");
-        writer.WriteLine("                          it is processed in name order.");
+        writer.WriteLine("  <input> [<input>...]    One or more paths to .jsonl/.jsonl.zst OTLP trace files,");
+        writer.WriteLine("                          or directories; every .jsonl/.jsonl.zst file directly");
+        writer.WriteLine("                          inside each directory is processed in name order.");
         writer.WriteLine();
         writer.WriteLine("Options:");
         writer.WriteLine("  -e, --endpoint <url>    Upstream OTLP endpoint. Overrides environment variables.");
