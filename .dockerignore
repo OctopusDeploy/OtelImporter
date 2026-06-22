@@ -1,0 +1,11 @@
+# Keep the build context small and prevent local build output / git history from leaking in.
+**/bin/
+**/obj/
+.git/
+.github/
+.idea/
+artifacts/
+tests/
+*.md
+Dockerfile
+.dockerignore
