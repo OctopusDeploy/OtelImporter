@@ -10,7 +10,7 @@ public class CommandLineParserTests
         var result = CommandLineParser.Parse(["traces.jsonl"]);
 
         Assert.Null(result.Error);
-        Assert.Equal("traces.jsonl", result.Options!.InputFile);
+        Assert.Equal("traces.jsonl", result.Options!.InputFiles[0]);
         Assert.Null(result.Options.Endpoint);
         Assert.Null(result.Options.Protocol);
     }
@@ -47,7 +47,7 @@ public class CommandLineParserTests
 
         Assert.Null(result.Error);
         Assert.True(result.Options!.Inspect);
-        Assert.Equal("traces.jsonl", result.Options.InputFile);
+        Assert.Equal("traces.jsonl", result.Options.InputFiles[0]);
     }
 
     [Fact]
@@ -233,7 +233,7 @@ public class CommandLineParserTests
         var result = CommandLineParser.Parse(["-e", "http://host:4317", "-p", "grpc", "traces.jsonl"]);
 
         Assert.Null(result.Error);
-        Assert.Equal("traces.jsonl", result.Options!.InputFile);
+        Assert.Equal("traces.jsonl", result.Options!.InputFiles[0]);
         Assert.Equal("http://host:4317", result.Options.Endpoint);
         Assert.Equal(OtlpProtocol.Grpc, result.Options.Protocol);
     }
@@ -316,10 +316,11 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void RejectsTwoPositionalArguments()
+    public void ParsesMultiplePositionalArguments()
     {
-        var result = CommandLineParser.Parse(["one.jsonl", "two.jsonl"]);
+        var result = CommandLineParser.Parse(["one.jsonl", "two.jsonl", "three/"]);
 
-        Assert.NotNull(result.Error);
+        Assert.Null(result.Error);
+        Assert.Equal(["one.jsonl", "two.jsonl", "three/"], result.Options!.InputFiles);
     }
 }

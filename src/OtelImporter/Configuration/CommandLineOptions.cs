@@ -2,7 +2,7 @@ namespace OtelImporter.Configuration;
 
 internal sealed record CommandLineOptions
 {
-    public string? InputFile { get; init; }
+    public IReadOnlyList<string> InputFiles { get; init; } = [];
     public string? Endpoint { get; init; }
     public OtlpProtocol? Protocol { get; init; }
     public double? MaxBatchesPerSecond { get; init; }
@@ -26,7 +26,7 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 
 // Hand-rolled argument parsing keeps the dependency surface (and AOT footprint) small.
 // Supported:
-//   <input>                 positional, a *.jsonl/*.jsonl.zst trace file or a directory of them
+//   <input> [<input>...]    positional, one or more trace files or directories
 //   --endpoint, -e <url>    upstream OTLP endpoint (overrides environment variables)
 //   --protocol, -p <value>  grpc | http (overrides port sniffing)
 //   --max-rate, -r <value>  throttle: maximum batches per second
@@ -44,7 +44,7 @@ internal static class CommandLineParser
 {
     public static CommandLineParseResult Parse(string[] args)
     {
-        string? inputFile = null;
+        var inputFiles = new List<string>();
         string? endpoint = null;
         OtlpProtocol? protocol = null;
         double? maxBatchesPerSecond = null;
@@ -164,9 +164,7 @@ internal static class CommandLineParser
                 default:
                     if (arg.StartsWith('-'))
                         return CommandLineParseResult.Failure($"Unknown option '{arg}'.");
-                    if (inputFile is not null)
-                        return CommandLineParseResult.Failure($"Unexpected extra argument '{arg}'. Only one input file is supported.");
-                    inputFile = arg;
+                    inputFiles.Add(arg);
                     break;
             }
         }
@@ -179,7 +177,7 @@ internal static class CommandLineParser
 
         return CommandLineParseResult.Success(new CommandLineOptions
         {
-            InputFile = inputFile,
+            InputFiles = inputFiles,
             Endpoint = endpoint,
             Protocol = protocol,
             MaxBatchesPerSecond = maxBatchesPerSecond,
