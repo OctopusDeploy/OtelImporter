@@ -26,7 +26,7 @@ internal sealed record CommandLineParseResult(CommandLineOptions? Options, strin
 
 // Hand-rolled argument parsing keeps the dependency surface (and AOT footprint) small.
 // Supported:
-//   <input> [<input>...]    positional, one or more trace files or directories
+//   <input>[,<input>...]    positional, one or more comma-separated trace files or directories
 //   --endpoint, -e <url>    upstream OTLP endpoint (overrides environment variables)
 //   --protocol, -p <value>  grpc | http (overrides port sniffing)
 //   --max-rate, -r <value>  throttle: maximum batches per second
@@ -164,7 +164,7 @@ internal static class CommandLineParser
                 default:
                     if (arg.StartsWith('-'))
                         return CommandLineParseResult.Failure($"Unknown option '{arg}'.");
-                    inputFiles.Add(arg);
+                    inputFiles.AddRange(arg.Split(',', StringSplitOptions.RemoveEmptyEntries));
                     break;
             }
         }

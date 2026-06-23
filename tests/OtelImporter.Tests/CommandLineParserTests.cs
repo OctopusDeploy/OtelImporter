@@ -316,11 +316,21 @@ public class CommandLineParserTests
     }
 
     [Fact]
-    public void ParsesMultiplePositionalArguments()
+    public void ParsesCommaSeparatedInputs()
     {
-        var result = CommandLineParser.Parse(["one.jsonl", "two.jsonl", "three/"]);
+        var result = CommandLineParser.Parse(["one.jsonl,two.jsonl,three/"]);
 
         Assert.Null(result.Error);
         Assert.Equal(["one.jsonl", "two.jsonl", "three/"], result.Options!.InputFiles);
+    }
+
+    [Fact]
+    public void ParsesCommaSeparatedInputsMixedWithFlags()
+    {
+        var result = CommandLineParser.Parse(["one.jsonl,two.jsonl", "--inspect"]);
+
+        Assert.Null(result.Error);
+        Assert.Equal(["one.jsonl", "two.jsonl"], result.Options!.InputFiles);
+        Assert.True(result.Options.Inspect);
     }
 }

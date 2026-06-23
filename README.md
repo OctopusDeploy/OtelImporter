@@ -73,7 +73,7 @@ OtelImporter traces-1776.jsonl.zst --inspect
 
 | Argument / Option        | Description                                                        |
 | ------------------------ | ----------------------------------------------------------------- |
-| `<input>`                | Path to a `.jsonl`/`.jsonl.zst` trace file, or a directory of them (positional). |
+| `<input>[,<input>...]`   | Comma-separated paths to `.jsonl`/`.jsonl.zst` trace files, or directories (positional). |
 | `-e`, `--endpoint <url>` | Upstream OTLP endpoint. Overrides the environment variables.       |
 | `-p`, `--protocol <v>`   | `grpc` or `http`. Overrides the protocol sniffed from the port.    |
 | `-r`, `--max-rate <n>`   | Throttle to at most `n` batches/sec (default: unlimited).          |
