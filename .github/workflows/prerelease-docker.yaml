@@ -141,7 +141,6 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }}
-            ${{ env.IMAGE_NAME }}:prerelease
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
