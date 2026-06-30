@@ -133,7 +133,12 @@ internal static class Importer
         var progress = new Progress<long>(count =>
         {
             if (count % 100 == 0)
-                Console.Write($"\r  exported {count} batches...");
+            {
+                if (Console.IsOutputRedirected)
+                    Console.WriteLine($"  exported {count} batches...");
+                else
+                    Console.Write($"\r  exported {count} batches...");
+            }
         });
 
         try
