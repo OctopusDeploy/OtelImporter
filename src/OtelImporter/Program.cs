@@ -15,12 +15,6 @@ internal static class Importer
 
     public static async Task<int> RunAsync(string[] args)
     {
-        if (Console.IsOutputRedirected)
-        {
-            var writer = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
-            Console.SetOut(writer);
-        }
-
         var parse = CommandLineParser.Parse(args);
         if (parse.Error is not null)
         {
@@ -138,7 +132,7 @@ internal static class Importer
         var stopwatch = Stopwatch.StartNew();
         var progress = new Progress<long>(count =>
         {
-            if (count % 1000 == 0)
+            if (count % 100 == 0)
             {
                 if (Console.IsOutputRedirected)
                     Console.WriteLine($"  exported {count} batches...");
