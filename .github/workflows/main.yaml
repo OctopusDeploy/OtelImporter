@@ -130,7 +130,8 @@ jobs:
   docker:
     name: "Build and Push Docker image"
     needs: [build, publish]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # runs on push to main or on workflow dispatch for prerelease branches
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && contains( needs.build.outputs.version, '-' )
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -162,15 +163,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Prerelease versions (containing '-') get only the version-timestamp tag; stable builds also get ':latest'.
+      # Prerelease versions included a timestamp so all tags are unique. We can build multiple images from one branch.
+      - name: Compute Docker tags
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d%H%M%S')
+          {
+            echo 'DOCKER_TAGS<<EOF'
+            if [[ "${{ needs.build.outputs.version }}" != *-* ]]; then
+              echo "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }}"
+              echo "${{ env.IMAGE_NAME }}:latest"
+            else
+              echo "${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }}-${TIMESTAMP}"
+            fi
+            echo EOF
+          } >> "$GITHUB_ENV"
+
       - name: Build and push image
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }}
-            ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ env.DOCKER_TAGS }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
